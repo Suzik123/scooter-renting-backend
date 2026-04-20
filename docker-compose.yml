@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: uniscoot
+      POSTGRES_PASSWORD: uniscoot
+      POSTGRES_DB: uniscoot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uniscoot -d uniscoot"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks: [uniscoot]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      ENVIRONMENT: development
+      POSTGRES_DSN: "postgres://uniscoot:uniscoot@postgres:5432/uniscoot?sslmode=disable"
+      SERVER_ADDRESS: "0.0.0.0:8080"
+      JWT_SECRET: "dev-secret-change-me"
+      JWT_ISSUER: "uniscoot"
+      JWT_TTL: "24h"
+      CORS_ALLOWED_ORIGINS: "*"
+      BCRYPT_COST: "10"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    networks: [uniscoot]
+
+volumes:
+  pg_data: {}
+
+networks:
+  uniscoot: {}
