@@ -24,15 +24,15 @@ type ListFilter struct {
 }
 
 type UpdatePatch struct {
-	Model      *string
-	Status     *string
-	ZoneIDSet  bool
-	ZoneID     *uuid.UUID
-	BatteryPct *int
-	LatSet     bool
-	Lat        *decimal.Decimal
-	LngSet     bool
-	Lng        *decimal.Decimal
+	Model        *string
+	Status       *string
+	ZoneIDSet    bool
+	ZoneID       *uuid.UUID
+	BatteryLevel *int
+	LatSet       bool
+	Lat          *decimal.Decimal
+	LngSet       bool
+	Lng          *decimal.Decimal
 }
 
 type Repository struct {
@@ -46,18 +46,18 @@ func New(q *sqlc.Queries, pool *pgxpool.Pool) *Repository {
 
 func (r *Repository) Create(ctx context.Context, s *models.Scooter) error {
 	row, err := r.q.CreateScooter(ctx, sqlc.CreateScooterParams{
-		Code:       s.Code,
-		Model:      s.Model,
-		BatteryPct: int32(s.BatteryPct),
-		Status:     s.Status,
-		ZoneID:     s.ZoneID,
-		Lat:        s.Lat,
-		Lng:        s.Lng,
+		QrCode:       s.QRCode,
+		BatteryLevel: int32(s.BatteryLevel),
+		Status:       s.Status,
+		ZoneID:       s.ZoneID,
+		Model:        s.Model,
+		Lat:          s.Lat,
+		Lng:          s.Lng,
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
-			return apperrors.Conflict("scooter code already exists")
+			return apperrors.Conflict("scooter qr_code already exists")
 		}
 		return fmt.Errorf("scooters.Create: %w", err)
 	}
@@ -101,21 +101,21 @@ func (r *Repository) List(ctx context.Context, filter ListFilter) ([]models.Scoo
 
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, patch UpdatePatch) (*models.Scooter, error) {
 	var battery *int32
-	if patch.BatteryPct != nil {
-		v := int32(*patch.BatteryPct)
+	if patch.BatteryLevel != nil {
+		v := int32(*patch.BatteryLevel)
 		battery = &v
 	}
 	row, err := r.q.UpdateScooter(ctx, sqlc.UpdateScooterParams{
-		Model:      patch.Model,
-		Status:     patch.Status,
-		ZoneIDSet:  patch.ZoneIDSet,
-		ZoneID:     patch.ZoneID,
-		BatteryPct: battery,
-		LatSet:     patch.LatSet,
-		Lat:        patch.Lat,
-		LngSet:     patch.LngSet,
-		Lng:        patch.Lng,
-		ID:         id,
+		Model:        patch.Model,
+		Status:       patch.Status,
+		ZoneIDSet:    patch.ZoneIDSet,
+		ZoneID:       patch.ZoneID,
+		BatteryLevel: battery,
+		LatSet:       patch.LatSet,
+		Lat:          patch.Lat,
+		LngSet:       patch.LngSet,
+		Lng:          patch.Lng,
+		ScooterID:    id,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -162,7 +162,7 @@ func (r *Repository) FindNearby(ctx context.Context, lat, lng float64, radiusMet
 func (r *Repository) SetStatusTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, fromStatus, toStatus string) error {
 	_, err := r.q.WithTx(tx).SetScooterStatus(ctx, sqlc.SetScooterStatusParams{
 		ToStatus:   toStatus,
-		ID:         id,
+		ScooterID:  id,
 		FromStatus: fromStatus,
 	})
 	if err != nil {
@@ -189,16 +189,16 @@ func (r *Repository) GetTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*model
 
 func fromSQLC(in sqlc.Scooter) models.Scooter {
 	return models.Scooter{
-		ID:         in.ID,
-		Code:       in.Code,
-		Model:      in.Model,
-		BatteryPct: int(in.BatteryPct),
-		Status:     in.Status,
-		ZoneID:     in.ZoneID,
-		Lat:        in.Lat,
-		Lng:        in.Lng,
-		CreatedAt:  in.CreatedAt,
-		UpdatedAt:  in.UpdatedAt,
-		DeletedAt:  in.DeletedAt,
+		ID:           in.ScooterID,
+		QRCode:       in.QrCode,
+		BatteryLevel: int(in.BatteryLevel),
+		Status:       in.Status,
+		ZoneID:       in.ZoneID,
+		Model:        in.Model,
+		Lat:          in.Lat,
+		Lng:          in.Lng,
+		CreatedAt:    in.CreatedAt,
+		UpdatedAt:    in.UpdatedAt,
+		DeletedAt:    in.DeletedAt,
 	}
 }

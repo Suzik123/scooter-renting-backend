@@ -14,15 +14,19 @@ const (
 )
 
 type Rental struct {
-	ID           uuid.UUID       `db:"id" json:"id"`
-	UserID       uuid.UUID       `db:"user_id" json:"user_id"`
-	ScooterID    uuid.UUID       `db:"scooter_id" json:"scooter_id"`
-	PriceModelID uuid.UUID       `db:"price_model_id" json:"price_model_id"`
-	StartedAt    time.Time       `db:"started_at" json:"started_at"`
-	EndedAt      *time.Time      `db:"ended_at" json:"ended_at,omitempty"`
-	DistanceM    int             `db:"distance_m" json:"distance_m"`
-	TotalCost    decimal.Decimal `db:"total_cost" json:"total_cost"`
-	Status       string          `db:"status" json:"status"`
-	CreatedAt    time.Time       `db:"created_at" json:"created_at"`
-	UpdatedAt    time.Time       `db:"updated_at" json:"updated_at"`
+	ID           uuid.UUID        `db:"rental_id" json:"rental_id"`
+	UserID       uuid.UUID        `db:"user_id" json:"user_id"`
+	ScooterID    uuid.UUID        `db:"scooter_id" json:"scooter_id"`
+	PriceModelID uuid.UUID        `db:"price_model_id" json:"price_model_id"`
+	StartTime    time.Time        `db:"start_time" json:"start_time"`
+	EndTime      *time.Time       `db:"end_time" json:"end_time,omitempty"`
+	StartLat     *decimal.Decimal `db:"start_lat" json:"start_lat,omitempty"`
+	StartLon     *decimal.Decimal `db:"start_lon" json:"start_lon,omitempty"`
+	EndLat       *decimal.Decimal `db:"end_lat" json:"end_lat,omitempty"`
+	EndLon       *decimal.Decimal `db:"end_lon" json:"end_lon,omitempty"`
+	TotalCost    decimal.Decimal  `db:"total_cost" json:"total_cost"`
+	Status       string           `db:"status" json:"status"`
+	DistanceM    int              `db:"distance_m" json:"distance_m"`
+	CreatedAt    time.Time        `db:"created_at" json:"created_at"`
+	UpdatedAt    time.Time        `db:"updated_at" json:"updated_at"`
 }

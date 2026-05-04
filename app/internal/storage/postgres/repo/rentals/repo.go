@@ -30,9 +30,9 @@ func New(q *sqlc.Queries, pool *pgxpool.Pool) *Repository {
 
 // CreateTx inserts a rental inside tx, mapping unique-violation constraint names to domain errors.
 func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, rental *models.Rental) error {
-	var startedAt any
-	if !rental.StartedAt.IsZero() {
-		startedAt = rental.StartedAt
+	var startTime any
+	if !rental.StartTime.IsZero() {
+		startTime = rental.StartTime
 	}
 	var status any
 	if rental.Status != "" {
@@ -42,7 +42,9 @@ func (r *Repository) CreateTx(ctx context.Context, tx pgx.Tx, rental *models.Ren
 		UserID:       rental.UserID,
 		ScooterID:    rental.ScooterID,
 		PriceModelID: rental.PriceModelID,
-		StartedAt:    startedAt,
+		StartTime:    startTime,
+		StartLat:     rental.StartLat,
+		StartLon:     rental.StartLon,
 		Status:       status,
 	})
 	if err != nil {
@@ -87,13 +89,23 @@ func (r *Repository) GetForUpdateTx(ctx context.Context, tx pgx.Tx, id uuid.UUID
 	return &ret, nil
 }
 
-func (r *Repository) EndTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, endedAt time.Time, distanceM int, totalCost decimal.Decimal) (*models.Rental, error) {
-	endedAtCopy := endedAt
+func (r *Repository) EndTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	id uuid.UUID,
+	endTime time.Time,
+	endLat, endLon *decimal.Decimal,
+	distanceM int,
+	totalCost decimal.Decimal,
+) (*models.Rental, error) {
+	endTimeCopy := endTime
 	row, err := r.q.WithTx(tx).EndRental(ctx, sqlc.EndRentalParams{
-		EndedAt:   &endedAtCopy,
+		EndTime:   &endTimeCopy,
+		EndLat:    endLat,
+		EndLon:    endLon,
 		DistanceM: int32(distanceM),
 		TotalCost: totalCost,
-		ID:        id,
+		RentalID:  id,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -139,15 +151,19 @@ func (r *Repository) ListByUser(ctx context.Context, userID uuid.UUID, page mode
 
 func fromSQLC(in sqlc.Rental) models.Rental {
 	return models.Rental{
-		ID:           in.ID,
+		ID:           in.RentalID,
 		UserID:       in.UserID,
 		ScooterID:    in.ScooterID,
 		PriceModelID: in.PriceModelID,
-		StartedAt:    in.StartedAt,
-		EndedAt:      in.EndedAt,
-		DistanceM:    int(in.DistanceM),
+		StartTime:    in.StartTime,
+		EndTime:      in.EndTime,
+		StartLat:     in.StartLat,
+		StartLon:     in.StartLon,
+		EndLat:       in.EndLat,
+		EndLon:       in.EndLon,
 		TotalCost:    in.TotalCost,
 		Status:       in.Status,
+		DistanceM:    int(in.DistanceM),
 		CreatedAt:    in.CreatedAt,
 		UpdatedAt:    in.UpdatedAt,
 	}

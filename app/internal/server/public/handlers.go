@@ -9,19 +9,29 @@ import (
 	"github.com/shopspring/decimal"
 	"go.uber.org/zap"
 
+	"github.com/uniscoot/scooter-renting-backend/app/internal/apperrors"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/models"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/server/resp"
+	maintsvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/maintenance"
+	paymentsvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/payments"
 	pricesvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/pricemodels"
+	rentalsvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/rentals"
 	scootersvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/scooters"
 	usersvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/users"
+	zonesvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/zones"
 )
 
 // ---- service interfaces consumed by the HTTP handlers.
 
 // AuthService is the subset of the auth service used by HTTP handlers.
 type AuthService interface {
-	Register(ctx context.Context, email, name, password, phone string) (*models.User, string, error)
+	Register(ctx context.Context, email, firstName, lastName, password, phoneNumber string) (*models.User, string, error)
 	Login(ctx context.Context, email, password string) (*models.User, string, error)
+}
+
+// OAuthService is the subset of the oauth service used by HTTP handlers.
+type OAuthService interface {
+	VerifyAndLogin(ctx context.Context, idToken string) (*models.User, string, error)
 }
 
 // UsersService is the subset of the users service used by HTTP handlers.
@@ -29,13 +39,11 @@ type UsersService interface {
 	Get(ctx context.Context, id uuid.UUID) (*models.User, error)
 	Update(ctx context.Context, id uuid.UUID, patch usersvc.UpdatePatch) (*models.User, error)
 	SoftDelete(ctx context.Context, id uuid.UUID) error
-	GetWallet(ctx context.Context, id uuid.UUID) (decimal.Decimal, error)
-	TopUp(ctx context.Context, id uuid.UUID, amount decimal.Decimal) (decimal.Decimal, error)
 }
 
 // ScootersService is the subset of the scooters service used by HTTP handlers.
 type ScootersService interface {
-	Create(ctx context.Context, code, model string, zoneID *uuid.UUID, lat, lng *decimal.Decimal, batteryPct int) (*models.Scooter, error)
+	Create(ctx context.Context, qrCode, model string, zoneID *uuid.UUID, lat, lng *decimal.Decimal, batteryLevel int) (*models.Scooter, error)
 	Get(ctx context.Context, id uuid.UUID) (*models.Scooter, error)
 	List(ctx context.Context, filter scootersvc.ListFilter) ([]models.Scooter, int, error)
 	Nearby(ctx context.Context, lat, lng float64, radiusMeters, limit int) ([]models.Scooter, error)
@@ -45,10 +53,10 @@ type ScootersService interface {
 
 // ZonesService is the subset of the zones service used by HTTP handlers.
 type ZonesService interface {
-	Create(ctx context.Context, name string, boundary *string) (*models.Zone, error)
+	Create(ctx context.Context, in zonesvc.CreateInput) (*models.Zone, error)
 	Get(ctx context.Context, id uuid.UUID) (*models.Zone, error)
 	List(ctx context.Context, page models.Page) ([]models.Zone, int, error)
-	Update(ctx context.Context, id uuid.UUID, name *string, boundary *string) (*models.Zone, error)
+	Update(ctx context.Context, id uuid.UUID, patch zonesvc.UpdatePatch) (*models.Zone, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 }
 
@@ -63,8 +71,8 @@ type PriceModelsService interface {
 
 // RentalsService is the subset of the rentals service used by HTTP handlers.
 type RentalsService interface {
-	Start(ctx context.Context, userID, scooterID, priceModelID uuid.UUID) (*models.Rental, error)
-	End(ctx context.Context, rentalID, actorUserID uuid.UUID) (*models.Rental, error)
+	Start(ctx context.Context, userID, scooterID, priceModelID uuid.UUID, startLat, startLon *decimal.Decimal) (*models.Rental, error)
+	End(ctx context.Context, rentalID, actorUserID uuid.UUID, endLat, endLon *decimal.Decimal) (*models.Rental, *rentalsvc.PaymentResult, error)
 	AdminCancel(ctx context.Context, rentalID uuid.UUID) error
 	ListByUser(ctx context.Context, userID uuid.UUID, page models.Page) ([]models.Rental, int, error)
 	Get(ctx context.Context, id uuid.UUID) (*models.Rental, error)
@@ -72,22 +80,33 @@ type RentalsService interface {
 
 // MaintenanceService is the subset of the maintenance service used by handlers.
 type MaintenanceService interface {
-	Create(ctx context.Context, scooterID uuid.UUID, description string, technicianID *uuid.UUID) (*models.MaintenanceLog, error)
+	Create(ctx context.Context, in maintsvc.CreateInput) (*models.MaintenanceLog, error)
 	Close(ctx context.Context, id uuid.UUID) (*models.MaintenanceLog, error)
 	ListByScooter(ctx context.Context, scooterID uuid.UUID, page models.Page) ([]models.MaintenanceLog, int, error)
 	Get(ctx context.Context, id uuid.UUID) (*models.MaintenanceLog, error)
+}
+
+// PaymentsService is the subset of the payments service used by handlers.
+type PaymentsService interface {
+	CreateSetupIntent(ctx context.Context, userID uuid.UUID) (clientSecret, setupIntentID string, err error)
+	ListPaymentMethods(ctx context.Context, userID uuid.UUID) ([]paymentsvc.PaymentMethodView, error)
+	DetachPaymentMethod(ctx context.Context, userID uuid.UUID, paymentMethodID string) error
+	ListPaymentsByUser(ctx context.Context, userID uuid.UUID, page models.Page) ([]models.Payment, int, error)
+	HandleWebhookEvent(ctx context.Context, payload []byte, sigHeader string) error
 }
 
 // Handler is the fiber-based HTTP handler aggregate for all routes.
 type Handler struct {
 	version     string
 	auth        AuthService
+	oauth       OAuthService
 	users       UsersService
 	scooters    ScootersService
 	zones       ZonesService
 	priceModels PriceModelsService
 	rentals     RentalsService
 	maintenance MaintenanceService
+	payments    PaymentsService
 	log         *zap.Logger
 }
 
@@ -95,12 +114,14 @@ type Handler struct {
 type Deps struct {
 	Version     string
 	Auth        AuthService
+	OAuth       OAuthService
 	Users       UsersService
 	Scooters    ScootersService
 	Zones       ZonesService
 	PriceModels PriceModelsService
 	Rentals     RentalsService
 	Maintenance MaintenanceService
+	Payments    PaymentsService
 	Log         *zap.Logger
 }
 
@@ -113,12 +134,14 @@ func NewHandler(d Deps) *Handler {
 	return &Handler{
 		version:     d.Version,
 		auth:        d.Auth,
+		oauth:       d.OAuth,
 		users:       d.Users,
 		scooters:    d.Scooters,
 		zones:       d.Zones,
 		priceModels: d.PriceModels,
 		rentals:     d.Rentals,
 		maintenance: d.Maintenance,
+		payments:    d.Payments,
 		log:         log,
 	}
 }
@@ -164,15 +187,20 @@ func (h *Handler) Version(c fiber.Ctx) error {
 // ---- auth
 
 type registerReq struct {
-	Email    string `json:"email" validate:"required,email,max=255"`
-	Name     string `json:"name" validate:"required,min=1,max=100"`
-	Password string `json:"password" validate:"required,min=8,max=128"`
-	Phone    string `json:"phone" validate:"omitempty,max=20"`
+	Email       string `json:"email" validate:"required,email,max=255"`
+	FirstName   string `json:"first_name" validate:"required,min=1,max=100"`
+	LastName    string `json:"last_name" validate:"omitempty,max=100"`
+	Password    string `json:"password" validate:"required,min=8,max=128"`
+	PhoneNumber string `json:"phone_number" validate:"omitempty,max=32"`
 }
 
 type loginReq struct {
 	Email    string `json:"email" validate:"required,email,max=255"`
 	Password string `json:"password" validate:"required,min=1,max=128"`
+}
+
+type oauthGoogleReq struct {
+	IDToken string `json:"id_token" validate:"required,min=10"`
 }
 
 type authResp struct {
@@ -186,7 +214,7 @@ func (h *Handler) Register(c fiber.Ctx) error {
 	if err := DecodeBody(c, &body); err != nil {
 		return WriteDomain(c, err)
 	}
-	user, token, err := h.auth.Register(c.Context(), body.Email, body.Name, body.Password, body.Phone)
+	user, token, err := h.auth.Register(c.Context(), body.Email, body.FirstName, body.LastName, body.Password, body.PhoneNumber)
 	if err != nil {
 		return WriteDomain(c, err)
 	}
@@ -200,6 +228,19 @@ func (h *Handler) Login(c fiber.Ctx) error {
 		return WriteDomain(c, err)
 	}
 	user, token, err := h.auth.Login(c.Context(), body.Email, body.Password)
+	if err != nil {
+		return WriteDomain(c, err)
+	}
+	return WriteJSON(c, fiber.StatusOK, authResp{Token: token, User: user})
+}
+
+// OAuthGoogle verifies a Google id_token and returns a session token.
+func (h *Handler) OAuthGoogle(c fiber.Ctx) error {
+	var body oauthGoogleReq
+	if err := DecodeBody(c, &body); err != nil {
+		return WriteDomain(c, err)
+	}
+	user, token, err := h.oauth.VerifyAndLogin(c.Context(), body.IDToken)
 	if err != nil {
 		return WriteDomain(c, err)
 	}
@@ -298,16 +339,9 @@ func (h *Handler) ListPriceModels(c fiber.Ctx) error {
 // ---- users
 
 type updateUserReq struct {
-	Name  *string `json:"name" validate:"omitempty,min=1,max=100"`
-	Phone *string `json:"phone" validate:"omitempty,max=20"`
-}
-
-type topupReq struct {
-	Amount decimal.Decimal `json:"amount" validate:"required"`
-}
-
-type walletResp struct {
-	Balance decimal.Decimal `json:"balance"`
+	FirstName   *string `json:"first_name" validate:"omitempty,min=1,max=100"`
+	LastName    *string `json:"last_name" validate:"omitempty,max=100"`
+	PhoneNumber *string `json:"phone_number" validate:"omitempty,max=32"`
 }
 
 // GetUser returns a user profile (owner-or-admin only).
@@ -339,7 +373,11 @@ func (h *Handler) UpdateUser(c fiber.Ctx) error {
 	if err := DecodeBody(c, &body); err != nil {
 		return WriteDomain(c, err)
 	}
-	u, err := h.users.Update(c.Context(), id, usersvc.UpdatePatch{Name: body.Name, Phone: body.Phone})
+	u, err := h.users.Update(c.Context(), id, usersvc.UpdatePatch{
+		FirstName:   body.FirstName,
+		LastName:    body.LastName,
+		PhoneNumber: body.PhoneNumber,
+	})
 	if err != nil {
 		return WriteDomain(c, err)
 	}
@@ -361,42 +399,6 @@ func (h *Handler) DeleteUser(c fiber.Ctx) error {
 	return WriteNoContent(c)
 }
 
-// GetWallet returns the user's wallet balance; owner-or-admin only.
-func (h *Handler) GetWallet(c fiber.Ctx) error {
-	id, err := URLParamUUID(c, "id")
-	if err != nil {
-		return WriteDomain(c, err)
-	}
-	if apiErr := assertOwnerOrAdmin(c, id); apiErr != nil {
-		return WriteError(c, apiErr)
-	}
-	bal, err := h.users.GetWallet(c.Context(), id)
-	if err != nil {
-		return WriteDomain(c, err)
-	}
-	return WriteJSON(c, fiber.StatusOK, walletResp{Balance: bal})
-}
-
-// TopUpWallet adds funds to the user's wallet; owner-or-admin only.
-func (h *Handler) TopUpWallet(c fiber.Ctx) error {
-	id, err := URLParamUUID(c, "id")
-	if err != nil {
-		return WriteDomain(c, err)
-	}
-	if apiErr := assertOwnerOrAdmin(c, id); apiErr != nil {
-		return WriteError(c, apiErr)
-	}
-	var body topupReq
-	if err := DecodeBody(c, &body); err != nil {
-		return WriteDomain(c, err)
-	}
-	bal, err := h.users.TopUp(c.Context(), id, body.Amount)
-	if err != nil {
-		return WriteDomain(c, err)
-	}
-	return WriteJSON(c, fiber.StatusOK, walletResp{Balance: bal})
-}
-
 // ListUserRentals returns the paginated list of a user's rentals.
 func (h *Handler) ListUserRentals(c fiber.Ctx) error {
 	id, err := URLParamUUID(c, "id")
@@ -413,11 +415,114 @@ func (h *Handler) ListUserRentals(c fiber.Ctx) error {
 	return WriteJSON(c, fiber.StatusOK, listEnvelope{Items: items, Total: total})
 }
 
+// ListUserPayments returns the paginated list of a user's payments.
+func (h *Handler) ListUserPayments(c fiber.Ctx) error {
+	id, err := URLParamUUID(c, "id")
+	if err != nil {
+		return WriteDomain(c, err)
+	}
+	if apiErr := assertOwnerOrAdmin(c, id); apiErr != nil {
+		return WriteError(c, apiErr)
+	}
+	items, total, err := h.payments.ListPaymentsByUser(c.Context(), id, PageFromCtx(c))
+	if err != nil {
+		return WriteDomain(c, err)
+	}
+	return WriteJSON(c, fiber.StatusOK, listEnvelope{Items: items, Total: total})
+}
+
+// ---- payments
+
+type setupIntentResp struct {
+	ClientSecret  string `json:"client_secret"`
+	SetupIntentID string `json:"setup_intent_id"`
+}
+
+type paymentMethodsResp struct {
+	Methods []paymentsvc.PaymentMethodView `json:"methods"`
+}
+
+// CreateSetupIntent issues a Stripe SetupIntent for the authenticated user.
+func (h *Handler) CreateSetupIntent(c fiber.Ctx) error {
+	ident := IdentityFromCtx(c)
+	if ident == nil {
+		return WriteError(c, resp.ErrUnauthorized(""))
+	}
+	cs, siID, err := h.payments.CreateSetupIntent(c.Context(), ident.UserID)
+	if err != nil {
+		return WriteDomain(c, err)
+	}
+	return WriteJSON(c, fiber.StatusOK, setupIntentResp{ClientSecret: cs, SetupIntentID: siID})
+}
+
+// ListPaymentMethods returns the authenticated user's saved cards.
+func (h *Handler) ListPaymentMethods(c fiber.Ctx) error {
+	ident := IdentityFromCtx(c)
+	if ident == nil {
+		return WriteError(c, resp.ErrUnauthorized(""))
+	}
+	methods, err := h.payments.ListPaymentMethods(c.Context(), ident.UserID)
+	if err != nil {
+		return WriteDomain(c, err)
+	}
+	return WriteJSON(c, fiber.StatusOK, paymentMethodsResp{Methods: methods})
+}
+
+// DetachPaymentMethod removes a card from the authenticated user's customer.
+func (h *Handler) DetachPaymentMethod(c fiber.Ctx) error {
+	ident := IdentityFromCtx(c)
+	if ident == nil {
+		return WriteError(c, resp.ErrUnauthorized(""))
+	}
+	pmID := c.Params("pm_id")
+	if pmID == "" {
+		return WriteError(c, resp.ErrValidation("missing pm_id"))
+	}
+	if err := h.payments.DetachPaymentMethod(c.Context(), ident.UserID, pmID); err != nil {
+		return WriteDomain(c, err)
+	}
+	return WriteNoContent(c)
+}
+
+// StripeWebhook receives raw Stripe events. Always returns 200 unless
+// signature verification fails (which yields 400).
+func (h *Handler) StripeWebhook(c fiber.Ctx) error {
+	sig := c.Get("Stripe-Signature")
+	body := c.Body()
+	if err := h.payments.HandleWebhookEvent(c.Context(), body, sig); err != nil {
+		if apperrors.Is(err, apperrors.KindInvalid) {
+			return WriteError(c, resp.ErrValidation(err.Error()))
+		}
+		h.log.Error("stripe webhook handler error", zap.Error(err))
+		return WriteDomain(c, err)
+	}
+	return WriteJSON(c, fiber.StatusOK, map[string]string{"status": "ok"})
+}
+
 // ---- rentals (authenticated)
 
 type startRentalReq struct {
-	ScooterID    uuid.UUID `json:"scooter_id" validate:"required"`
-	PriceModelID uuid.UUID `json:"price_model_id" validate:"required"`
+	ScooterID    uuid.UUID        `json:"scooter_id" validate:"required"`
+	PriceModelID uuid.UUID        `json:"price_model_id" validate:"required"`
+	StartLat     *decimal.Decimal `json:"start_lat"`
+	StartLon     *decimal.Decimal `json:"start_lon"`
+}
+
+type endRentalReq struct {
+	EndLat *decimal.Decimal `json:"end_lat"`
+	EndLon *decimal.Decimal `json:"end_lon"`
+}
+
+type endRentalPaymentResp struct {
+	ID            *uuid.UUID `json:"id,omitempty"`
+	Status        string     `json:"status"`
+	ClientSecret  *string    `json:"client_secret,omitempty"`
+	FailureReason *string    `json:"failure_reason,omitempty"`
+}
+
+type endRentalResp struct {
+	Rental  *models.Rental         `json:"rental"`
+	Payment *endRentalPaymentResp  `json:"payment,omitempty"`
 }
 
 // StartRental begins a new rental for the authenticated user.
@@ -430,7 +535,7 @@ func (h *Handler) StartRental(c fiber.Ctx) error {
 	if err := DecodeBody(c, &body); err != nil {
 		return WriteDomain(c, err)
 	}
-	rental, err := h.rentals.Start(c.Context(), ident.UserID, body.ScooterID, body.PriceModelID)
+	rental, err := h.rentals.Start(c.Context(), ident.UserID, body.ScooterID, body.PriceModelID, body.StartLat, body.StartLon)
 	if err != nil {
 		return WriteDomain(c, err)
 	}
@@ -453,7 +558,8 @@ func (h *Handler) GetRental(c fiber.Ctx) error {
 	return WriteJSON(c, fiber.StatusOK, rental)
 }
 
-// EndRental ends an active rental for the authenticated user.
+// EndRental ends an active rental for the authenticated user and reports the
+// post-rental charge result.
 func (h *Handler) EndRental(c fiber.Ctx) error {
 	ident := IdentityFromCtx(c)
 	if ident == nil {
@@ -463,22 +569,41 @@ func (h *Handler) EndRental(c fiber.Ctx) error {
 	if err != nil {
 		return WriteDomain(c, err)
 	}
-	rental, err := h.rentals.End(c.Context(), id, ident.UserID)
+	var body endRentalReq
+	if len(c.Body()) > 0 {
+		if err := DecodeBody(c, &body); err != nil {
+			return WriteDomain(c, err)
+		}
+	}
+	rental, payment, err := h.rentals.End(c.Context(), id, ident.UserID, body.EndLat, body.EndLon)
 	if err != nil {
 		return WriteDomain(c, err)
 	}
-	return WriteJSON(c, fiber.StatusOK, rental)
+	out := endRentalResp{Rental: rental}
+	if payment != nil {
+		p := &endRentalPaymentResp{
+			Status:        payment.Status,
+			ClientSecret:  payment.ClientSecret,
+			FailureReason: payment.FailureReason,
+		}
+		if payment.ID != uuid.Nil {
+			id := payment.ID
+			p.ID = &id
+		}
+		out.Payment = p
+	}
+	return WriteJSON(c, fiber.StatusOK, out)
 }
 
 // ---- admin: scooters
 
 type createScooterReq struct {
-	Code       string           `json:"code" validate:"required,min=1,max=20"`
-	Model      string           `json:"model" validate:"required,min=1,max=100"`
-	ZoneID     *uuid.UUID       `json:"zone_id"`
-	Lat        *decimal.Decimal `json:"lat"`
-	Lng        *decimal.Decimal `json:"lng"`
-	BatteryPct int              `json:"battery_pct" validate:"gte=0,lte=100"`
+	QRCode       string           `json:"qr_code" validate:"required,min=1,max=64"`
+	Model        string           `json:"model" validate:"omitempty,max=100"`
+	ZoneID       *uuid.UUID       `json:"zone_id"`
+	Lat          *decimal.Decimal `json:"lat"`
+	Lng          *decimal.Decimal `json:"lng"`
+	BatteryLevel int              `json:"battery_level" validate:"gte=0,lte=100"`
 }
 
 // CreateScooter creates a new scooter; admin only.
@@ -487,7 +612,7 @@ func (h *Handler) CreateScooter(c fiber.Ctx) error {
 	if err := DecodeBody(c, &body); err != nil {
 		return WriteDomain(c, err)
 	}
-	s, err := h.scooters.Create(c.Context(), body.Code, body.Model, body.ZoneID, body.Lat, body.Lng, body.BatteryPct)
+	s, err := h.scooters.Create(c.Context(), body.QRCode, body.Model, body.ZoneID, body.Lat, body.Lng, body.BatteryLevel)
 	if err != nil {
 		return WriteDomain(c, err)
 	}
@@ -525,10 +650,10 @@ func (h *Handler) UpdateScooter(c fiber.Ctx) error {
 			patch.ZoneID = &z
 		}
 	}
-	if v, ok := raw["battery_pct"]; ok {
+	if v, ok := raw["battery_level"]; ok {
 		if f, ok := v.(float64); ok {
 			n := int(f)
-			patch.BatteryPct = &n
+			patch.BatteryLevel = &n
 		}
 	}
 	if v, ok := raw["lat"]; ok {
@@ -565,13 +690,11 @@ func (h *Handler) RetireScooter(c fiber.Ctx) error {
 // ---- admin: zones
 
 type createZoneReq struct {
-	Name     string  `json:"name" validate:"required,min=1,max=100"`
-	Boundary *string `json:"boundary"`
-}
-
-type updateZoneReq struct {
-	Name     *string `json:"name" validate:"omitempty,min=1,max=100"`
-	Boundary *string `json:"boundary"`
+	Name         string           `json:"name" validate:"required,min=1,max=100"`
+	CenterLat    decimal.Decimal  `json:"center_lat" validate:"required"`
+	CenterLon    decimal.Decimal  `json:"center_lon" validate:"required"`
+	RadiusMeters int              `json:"radius_meters" validate:"required,gt=0"`
+	ZoneType     string           `json:"zone_type" validate:"omitempty,max=32"`
 }
 
 // CreateZone creates a new zone; admin only.
@@ -580,7 +703,13 @@ func (h *Handler) CreateZone(c fiber.Ctx) error {
 	if err := DecodeBody(c, &body); err != nil {
 		return WriteDomain(c, err)
 	}
-	z, err := h.zones.Create(c.Context(), body.Name, body.Boundary)
+	z, err := h.zones.Create(c.Context(), zonesvc.CreateInput{
+		Name:         body.Name,
+		CenterLat:    body.CenterLat,
+		CenterLon:    body.CenterLon,
+		RadiusMeters: body.RadiusMeters,
+		ZoneType:     body.ZoneType,
+	})
 	if err != nil {
 		return WriteDomain(c, err)
 	}
@@ -593,11 +722,38 @@ func (h *Handler) UpdateZone(c fiber.Ctx) error {
 	if err != nil {
 		return WriteDomain(c, err)
 	}
-	var body updateZoneReq
-	if err := DecodeBody(c, &body); err != nil {
+	raw := map[string]any{}
+	if err := DecodeRawBody(c, &raw); err != nil {
 		return WriteDomain(c, err)
 	}
-	z, err := h.zones.Update(c.Context(), id, body.Name, body.Boundary)
+	patch := zonesvc.UpdatePatch{}
+	if v, ok := raw["name"]; ok {
+		if s, ok := v.(string); ok {
+			patch.Name = &s
+		}
+	}
+	if v, ok := raw["center_lat"]; ok {
+		if d, ok := decimalFromAny(v); ok {
+			patch.CenterLat = &d
+		}
+	}
+	if v, ok := raw["center_lon"]; ok {
+		if d, ok := decimalFromAny(v); ok {
+			patch.CenterLon = &d
+		}
+	}
+	if v, ok := raw["radius_meters"]; ok {
+		if f, ok := v.(float64); ok {
+			n := int(f)
+			patch.RadiusMeters = &n
+		}
+	}
+	if v, ok := raw["zone_type"]; ok {
+		if s, ok := v.(string); ok {
+			patch.ZoneType = &s
+		}
+	}
+	z, err := h.zones.Update(c.Context(), id, patch)
 	if err != nil {
 		return WriteDomain(c, err)
 	}
@@ -619,11 +775,11 @@ func (h *Handler) DeleteZone(c fiber.Ctx) error {
 // ---- admin: price models
 
 type createPriceModelReq struct {
-	Name          string           `json:"name" validate:"required,min=1,max=100"`
-	PerMinuteRate decimal.Decimal  `json:"per_minute_rate" validate:"required"`
-	UnlockFee     decimal.Decimal  `json:"unlock_fee"`
-	DailyCap      *decimal.Decimal `json:"daily_cap"`
-	Currency      string           `json:"currency" validate:"omitempty,len=3"`
+	Name           string           `json:"name" validate:"required,min=1,max=100"`
+	PricePerMinute decimal.Decimal  `json:"price_per_minute" validate:"required"`
+	UnlockFee      decimal.Decimal  `json:"unlock_fee"`
+	DailyCap       *decimal.Decimal `json:"daily_cap"`
+	Currency       string           `json:"currency" validate:"omitempty,len=3"`
 }
 
 // CreatePriceModel creates a new price model; admin only.
@@ -633,11 +789,11 @@ func (h *Handler) CreatePriceModel(c fiber.Ctx) error {
 		return WriteDomain(c, err)
 	}
 	pm, err := h.priceModels.Create(c.Context(), pricesvc.CreateInput{
-		Name:          body.Name,
-		PerMinuteRate: body.PerMinuteRate,
-		UnlockFee:     body.UnlockFee,
-		DailyCap:      body.DailyCap,
-		Currency:      body.Currency,
+		Name:           body.Name,
+		PricePerMinute: body.PricePerMinute,
+		UnlockFee:      body.UnlockFee,
+		DailyCap:       body.DailyCap,
+		Currency:       body.Currency,
 	})
 	if err != nil {
 		return WriteDomain(c, err)
@@ -661,9 +817,9 @@ func (h *Handler) UpdatePriceModel(c fiber.Ctx) error {
 			patch.Name = &s
 		}
 	}
-	if v, ok := raw["per_minute_rate"]; ok {
+	if v, ok := raw["price_per_minute"]; ok {
 		if d, ok := decimalFromAny(v); ok {
-			patch.PerMinuteRate = &d
+			patch.PricePerMinute = &d
 		}
 	}
 	if v, ok := raw["unlock_fee"]; ok {
@@ -720,8 +876,9 @@ func (h *Handler) CancelRental(c fiber.Ctx) error {
 // ---- admin: maintenance
 
 type openMaintReq struct {
-	Description  string     `json:"description" validate:"required,min=1"`
-	TechnicianID *uuid.UUID `json:"technician_id"`
+	TechnicianName   string           `json:"technician_name" validate:"omitempty,max=100"`
+	IssueDescription string           `json:"issue_description" validate:"required,min=1"`
+	RepairCost       *decimal.Decimal `json:"repair_cost"`
 }
 
 // OpenMaintenance starts a maintenance record for the given scooter.
@@ -734,7 +891,12 @@ func (h *Handler) OpenMaintenance(c fiber.Ctx) error {
 	if err := DecodeBody(c, &body); err != nil {
 		return WriteDomain(c, err)
 	}
-	m, err := h.maintenance.Create(c.Context(), scooterID, body.Description, body.TechnicianID)
+	m, err := h.maintenance.Create(c.Context(), maintsvc.CreateInput{
+		ScooterID:        scooterID,
+		TechnicianName:   body.TechnicianName,
+		IssueDescription: body.IssueDescription,
+		RepairCost:       body.RepairCost,
+	})
 	if err != nil {
 		return WriteDomain(c, err)
 	}

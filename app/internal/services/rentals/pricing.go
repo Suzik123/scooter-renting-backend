@@ -22,7 +22,7 @@ func CalculateCost(pm *models.PriceModel, duration time.Duration) decimal.Decima
 	if minutes < 0 {
 		minutes = 0
 	}
-	cost := pm.UnlockFee.Add(pm.PerMinuteRate.Mul(decimal.NewFromInt(minutes)))
+	cost := pm.UnlockFee.Add(pm.PricePerMinute.Mul(decimal.NewFromInt(minutes)))
 	if pm.DailyCap != nil && cost.GreaterThan(*pm.DailyCap) {
 		cost = *pm.DailyCap
 	}

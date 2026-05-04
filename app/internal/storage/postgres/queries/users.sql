@@ -1,48 +1,55 @@
 -- name: CreateUser :one
-INSERT INTO users (email, name, phone, password_hash, oauth_id, role, wallet_balance)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, email, name, phone, password_hash, oauth_id, role, wallet_balance, created_at, updated_at, deleted_at;
+INSERT INTO users (first_name, last_name, email, phone_number, password_hash, oauth_provider, oauth_subject, role, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE(sqlc.narg('status'), 'active'))
+RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at;
 
 -- name: GetUserByID :one
-SELECT id, email, name, phone, password_hash, oauth_id, role, wallet_balance, created_at, updated_at, deleted_at
+SELECT user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at
 FROM users
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE user_id = $1 AND status <> 'deleted';
 
 -- name: GetUserByEmail :one
-SELECT id, email, name, phone, password_hash, oauth_id, role, wallet_balance, created_at, updated_at, deleted_at
+SELECT user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at
 FROM users
-WHERE LOWER(email) = LOWER($1) AND deleted_at IS NULL;
+WHERE LOWER(email) = LOWER($1) AND status <> 'deleted';
+
+-- name: GetUserByOAuth :one
+SELECT user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at
+FROM users
+WHERE oauth_provider = $1 AND oauth_subject = $2 AND status <> 'deleted';
 
 -- name: UpdateUser :one
 UPDATE users
-SET name = COALESCE(sqlc.narg('name'), name),
-    phone = COALESCE(sqlc.narg('phone'), phone),
-    updated_at = NOW()
-WHERE id = sqlc.arg('id') AND deleted_at IS NULL
-RETURNING id, email, name, phone, password_hash, oauth_id, role, wallet_balance, created_at, updated_at, deleted_at;
+SET first_name   = COALESCE(sqlc.narg('first_name'), first_name),
+    last_name    = COALESCE(sqlc.narg('last_name'), last_name),
+    phone_number = COALESCE(sqlc.narg('phone_number'), phone_number),
+    updated_at   = NOW()
+WHERE user_id = sqlc.arg('user_id') AND status <> 'deleted'
+RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at;
 
 -- name: SoftDeleteUser :execrows
 UPDATE users
-SET deleted_at = NOW(),
+SET status = 'deleted',
     updated_at = NOW()
-WHERE id = $1 AND deleted_at IS NULL;
-
--- name: AdjustWallet :one
-UPDATE users
-SET wallet_balance = wallet_balance + sqlc.arg('delta'),
-    updated_at = NOW()
-WHERE id = sqlc.arg('id')
-  AND deleted_at IS NULL
-  AND wallet_balance + sqlc.arg('delta') >= 0
-RETURNING wallet_balance;
-
--- name: GetWallet :one
-SELECT wallet_balance
-FROM users
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE user_id = $1 AND status <> 'deleted';
 
 -- name: SetUserRole :execrows
 UPDATE users
 SET role = sqlc.arg('role'),
     updated_at = NOW()
-WHERE id = sqlc.arg('id') AND deleted_at IS NULL;
+WHERE user_id = sqlc.arg('user_id') AND status <> 'deleted';
+
+-- name: LinkUserOAuth :one
+UPDATE users
+SET oauth_provider = sqlc.arg('oauth_provider'),
+    oauth_subject  = sqlc.arg('oauth_subject'),
+    updated_at     = NOW()
+WHERE user_id = sqlc.arg('user_id') AND status <> 'deleted'
+RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at;
+
+-- name: SetStripeCustomerID :one
+UPDATE users
+SET stripe_customer_id = sqlc.arg('stripe_customer_id'),
+    updated_at = NOW()
+WHERE user_id = sqlc.arg('user_id') AND status <> 'deleted'
+RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at;

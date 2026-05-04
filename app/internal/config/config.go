@@ -16,6 +16,8 @@ type Config struct {
 	Server ServerConfig
 	JWT    JWTConfig
 	Bcrypt BcryptConfig
+	Stripe StripeConfig
+	Google GoogleConfig
 }
 
 type DBConfig struct {
@@ -40,6 +42,17 @@ type JWTConfig struct {
 
 type BcryptConfig struct {
 	Cost int `env:"BCRYPT_COST" envDefault:"12"`
+}
+
+type StripeConfig struct {
+	SecretKey     string `env:"STRIPE_SECRET_KEY,required"`
+	WebhookSecret string `env:"STRIPE_WEBHOOK_SECRET,required"`
+	Currency      string `env:"STRIPE_CURRENCY" envDefault:"usd"`
+}
+
+type GoogleConfig struct {
+	ClientID     string `env:"GOOGLE_CLIENT_ID,required"`
+	HostedDomain string `env:"GOOGLE_HOSTED_DOMAIN"`
 }
 
 // New loads .env if present, then parses environment variables into Config.

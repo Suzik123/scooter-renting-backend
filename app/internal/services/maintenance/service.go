@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	"github.com/uniscoot/scooter-renting-backend/app/internal/apperrors"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/models"
@@ -14,7 +15,7 @@ import (
 type Repo interface {
 	Create(ctx context.Context, m *models.MaintenanceLog) error
 	Get(ctx context.Context, id uuid.UUID) (*models.MaintenanceLog, error)
-	Close(ctx context.Context, id uuid.UUID, closedAt time.Time) (*models.MaintenanceLog, error)
+	Close(ctx context.Context, id uuid.UUID, endDate time.Time) (*models.MaintenanceLog, error)
 	ListByScooter(ctx context.Context, scooterID uuid.UUID, page models.Page) ([]models.MaintenanceLog, int, error)
 }
 
@@ -26,16 +27,27 @@ func New(repo Repo) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) Create(ctx context.Context, scooterID uuid.UUID, description string, technicianID *uuid.UUID) (*models.MaintenanceLog, error) {
-	description = strings.TrimSpace(description)
-	if description == "" {
-		return nil, apperrors.Invalid("description is required")
+type CreateInput struct {
+	ScooterID        uuid.UUID
+	TechnicianName   string
+	IssueDescription string
+	RepairCost       *decimal.Decimal
+}
+
+func (s *Service) Create(ctx context.Context, in CreateInput) (*models.MaintenanceLog, error) {
+	desc := strings.TrimSpace(in.IssueDescription)
+	if desc == "" {
+		return nil, apperrors.Invalid("issue_description is required")
+	}
+	if in.RepairCost != nil && in.RepairCost.Sign() < 0 {
+		return nil, apperrors.Invalid("repair_cost must be non-negative")
 	}
 	m := &models.MaintenanceLog{
-		ScooterID:    scooterID,
-		Description:  description,
-		TechnicianID: technicianID,
-		Status:       models.MaintOpen,
+		ScooterID:        in.ScooterID,
+		TechnicianName:   strings.TrimSpace(in.TechnicianName),
+		IssueDescription: desc,
+		RepairCost:       in.RepairCost,
+		Status:           models.MaintOpen,
 	}
 	if err := s.repo.Create(ctx, m); err != nil {
 		return nil, err

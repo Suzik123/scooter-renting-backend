@@ -1,24 +1,24 @@
 -- name: CreateMaintenance :one
-INSERT INTO maintenance (scooter_id, description, technician_id, status)
-VALUES ($1, $2, $3, COALESCE(sqlc.narg('status'), 'open'))
-RETURNING id, scooter_id, description, opened_at, closed_at, technician_id, status;
+INSERT INTO maintenance (scooter_id, technician_name, issue_description, repair_cost, status)
+VALUES ($1, $2, $3, $4, COALESCE(sqlc.narg('status'), 'open'))
+RETURNING maintenance_id, scooter_id, technician_name, issue_description, repair_cost, start_date, end_date, status;
 
 -- name: GetMaintenance :one
-SELECT id, scooter_id, description, opened_at, closed_at, technician_id, status
-FROM maintenance WHERE id = $1;
+SELECT maintenance_id, scooter_id, technician_name, issue_description, repair_cost, start_date, end_date, status
+FROM maintenance WHERE maintenance_id = $1;
 
 -- name: CloseMaintenance :one
 UPDATE maintenance
-SET status = 'closed',
-    closed_at = sqlc.arg('closed_at')
-WHERE id = sqlc.arg('id') AND status = 'open'
-RETURNING id, scooter_id, description, opened_at, closed_at, technician_id, status;
+SET status   = 'closed',
+    end_date = sqlc.arg('end_date')
+WHERE maintenance_id = sqlc.arg('maintenance_id') AND status = 'open'
+RETURNING maintenance_id, scooter_id, technician_name, issue_description, repair_cost, start_date, end_date, status;
 
 -- name: ListMaintenanceByScooter :many
-SELECT id, scooter_id, description, opened_at, closed_at, technician_id, status
+SELECT maintenance_id, scooter_id, technician_name, issue_description, repair_cost, start_date, end_date, status
 FROM maintenance
 WHERE scooter_id = $1
-ORDER BY opened_at DESC
+ORDER BY start_date DESC
 LIMIT $2 OFFSET $3;
 
 -- name: CountMaintenanceByScooter :one

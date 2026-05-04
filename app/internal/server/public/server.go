@@ -78,12 +78,16 @@ func RegisterRoutes(p Params) {
 	app.Get("/health", h.Health)
 	app.Get("/version", h.Version)
 
+	// Stripe webhooks (no JWT, raw body read via c.Body()).
+	app.Post("/webhooks/stripe", h.StripeWebhook)
+
 	api := app.Group("/api")
 
 	// Auth (public)
 	auth := api.Group("/auth")
 	auth.Post("/register", h.Register)
 	auth.Post("/login", h.Login)
+	auth.Post("/oauth/google", h.OAuthGoogle)
 
 	// Scooters (public reads)
 	scooters := api.Group("/scooters")
@@ -102,14 +106,18 @@ func RegisterRoutes(p Params) {
 	users.Get("/", h.GetUser)
 	users.Put("/", h.UpdateUser)
 	users.Delete("/", h.DeleteUser)
-	users.Get("/wallet", h.GetWallet)
-	users.Post("/wallet/topup", h.TopUpWallet)
 	users.Get("/rentals", h.ListUserRentals)
+	users.Get("/payments", h.ListUserPayments)
 
 	rentals := authed.Group("/rentals")
 	rentals.Post("/", h.StartRental)
 	rentals.Get("/:id", h.GetRental)
 	rentals.Put("/:id/end", h.EndRental)
+
+	payments := authed.Group("/payments")
+	payments.Post("/setup-intent", h.CreateSetupIntent)
+	payments.Get("/methods", h.ListPaymentMethods)
+	payments.Delete("/methods/:pm_id", h.DetachPaymentMethod)
 
 	// Admin routes.
 	admin := api.Group("/admin", mw.JWTAuth, mw.AdminOnly)
@@ -145,7 +153,7 @@ func corsConfig(cfg *config.Config) cors.Config {
 	return cors.Config{
 		AllowOrigins: allowOrigins,
 		AllowMethods: []string{fiber.MethodGet, fiber.MethodPost, fiber.MethodPut, fiber.MethodPatch, fiber.MethodDelete, fiber.MethodOptions},
-		AllowHeaders: []string{"Authorization", "Content-Type", "X-Request-ID"},
+		AllowHeaders: []string{"Authorization", "Content-Type", "X-Request-ID", "Stripe-Signature"},
 	}
 }
 

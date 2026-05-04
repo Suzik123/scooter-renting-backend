@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/shopspring/decimal"
 
 	"github.com/uniscoot/scooter-renting-backend/app/internal/apperrors"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/models"
@@ -29,11 +30,17 @@ func (r *Repository) Create(ctx context.Context, m *models.MaintenanceLog) error
 	if m.Status != "" {
 		status = m.Status
 	}
+	var repairCost *decimal.Decimal
+	if m.RepairCost != nil {
+		v := *m.RepairCost
+		repairCost = &v
+	}
 	row, err := r.q.CreateMaintenance(ctx, sqlc.CreateMaintenanceParams{
-		ScooterID:    m.ScooterID,
-		Description:  m.Description,
-		TechnicianID: m.TechnicianID,
-		Status:       status,
+		ScooterID:        m.ScooterID,
+		TechnicianName:   m.TechnicianName,
+		IssueDescription: m.IssueDescription,
+		RepairCost:       repairCost,
+		Status:           status,
 	})
 	if err != nil {
 		return fmt.Errorf("maintenance.Create: %w", err)
@@ -54,9 +61,9 @@ func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*models.Maintenance
 	return &m, nil
 }
 
-func (r *Repository) Close(ctx context.Context, id uuid.UUID, closedAt time.Time) (*models.MaintenanceLog, error) {
-	closedAtCopy := closedAt
-	row, err := r.q.CloseMaintenance(ctx, sqlc.CloseMaintenanceParams{ClosedAt: &closedAtCopy, ID: id})
+func (r *Repository) Close(ctx context.Context, id uuid.UUID, endDate time.Time) (*models.MaintenanceLog, error) {
+	endDateCopy := endDate
+	row, err := r.q.CloseMaintenance(ctx, sqlc.CloseMaintenanceParams{EndDate: &endDateCopy, MaintenanceID: id})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperrors.Conflict("maintenance not open")
@@ -90,12 +97,13 @@ func (r *Repository) ListByScooter(ctx context.Context, scooterID uuid.UUID, pag
 
 func fromSQLC(in sqlc.Maintenance) models.MaintenanceLog {
 	return models.MaintenanceLog{
-		ID:           in.ID,
-		ScooterID:    in.ScooterID,
-		Description:  in.Description,
-		OpenedAt:     in.OpenedAt,
-		ClosedAt:     in.ClosedAt,
-		TechnicianID: in.TechnicianID,
-		Status:       in.Status,
+		ID:               in.MaintenanceID,
+		ScooterID:        in.ScooterID,
+		TechnicianName:   in.TechnicianName,
+		IssueDescription: in.IssueDescription,
+		RepairCost:       in.RepairCost,
+		StartDate:        in.StartDate,
+		EndDate:          in.EndDate,
+		Status:           in.Status,
 	}
 }

@@ -39,37 +39,37 @@ type ListFilter struct {
 }
 
 type UpdatePatch struct {
-	Model      *string
-	Status     *string
-	ZoneIDSet  bool
-	ZoneID     *uuid.UUID
-	BatteryPct *int
-	LatSet     bool
-	Lat        *decimal.Decimal
-	LngSet     bool
-	Lng        *decimal.Decimal
+	Model        *string
+	Status       *string
+	ZoneIDSet    bool
+	ZoneID       *uuid.UUID
+	BatteryLevel *int
+	LatSet       bool
+	Lat          *decimal.Decimal
+	LngSet       bool
+	Lng          *decimal.Decimal
 }
 
-func (s *Service) Create(ctx context.Context, code, model string, zoneID *uuid.UUID, lat, lng *decimal.Decimal, batteryPct int) (*models.Scooter, error) {
-	code = strings.TrimSpace(code)
+func (s *Service) Create(ctx context.Context, qrCode, model string, zoneID *uuid.UUID, lat, lng *decimal.Decimal, batteryLevel int) (*models.Scooter, error) {
+	qrCode = strings.TrimSpace(qrCode)
 	model = strings.TrimSpace(model)
-	if code == "" || model == "" {
-		return nil, apperrors.Invalid("code and model are required")
+	if qrCode == "" {
+		return nil, apperrors.Invalid("qr_code is required")
 	}
-	if batteryPct < 0 || batteryPct > 100 {
-		return nil, apperrors.Invalid("battery_pct must be in [0,100]")
+	if batteryLevel < 0 || batteryLevel > 100 {
+		return nil, apperrors.Invalid("battery_level must be in [0,100]")
 	}
 	if (lat == nil) != (lng == nil) {
 		return nil, apperrors.Invalid("lat and lng must be provided together")
 	}
 	sc := &models.Scooter{
-		Code:       code,
-		Model:      model,
-		BatteryPct: batteryPct,
-		Status:     models.ScooterAvailable,
-		ZoneID:     zoneID,
-		Lat:        lat,
-		Lng:        lng,
+		QRCode:       qrCode,
+		Model:        model,
+		BatteryLevel: batteryLevel,
+		Status:       models.ScooterAvailable,
+		ZoneID:       zoneID,
+		Lat:          lat,
+		Lng:          lng,
 	}
 	if err := s.repo.Create(ctx, sc); err != nil {
 		return nil, err
@@ -106,28 +106,28 @@ func (s *Service) Nearby(ctx context.Context, lat, lng float64, radiusMeters, li
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, patch UpdatePatch) (*models.Scooter, error) {
-	if patch.BatteryPct != nil {
-		if v := *patch.BatteryPct; v < 0 || v > 100 {
-			return nil, apperrors.Invalid("battery_pct must be in [0,100]")
+	if patch.BatteryLevel != nil {
+		if v := *patch.BatteryLevel; v < 0 || v > 100 {
+			return nil, apperrors.Invalid("battery_level must be in [0,100]")
 		}
 	}
 	if patch.Status != nil {
 		switch *patch.Status {
-		case models.ScooterAvailable, models.ScooterRented, models.ScooterMaintenance:
+		case models.ScooterAvailable, models.ScooterRented, models.ScooterMaintenance, models.ScooterRetired:
 		default:
 			return nil, apperrors.Invalid("invalid status")
 		}
 	}
 	return s.repo.Update(ctx, id, sc.UpdatePatch{
-		Model:      patch.Model,
-		Status:     patch.Status,
-		ZoneIDSet:  patch.ZoneIDSet,
-		ZoneID:     patch.ZoneID,
-		BatteryPct: patch.BatteryPct,
-		LatSet:     patch.LatSet,
-		Lat:        patch.Lat,
-		LngSet:     patch.LngSet,
-		Lng:        patch.Lng,
+		Model:        patch.Model,
+		Status:       patch.Status,
+		ZoneIDSet:    patch.ZoneIDSet,
+		ZoneID:       patch.ZoneID,
+		BatteryLevel: patch.BatteryLevel,
+		LatSet:       patch.LatSet,
+		Lat:          patch.Lat,
+		LngSet:       patch.LngSet,
+		Lng:          patch.Lng,
 	})
 }
 

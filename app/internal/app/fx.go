@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,11 +13,15 @@ import (
 	"go.uber.org/fx/fxevent"
 	"go.uber.org/zap"
 
+	googleclient "github.com/uniscoot/scooter-renting-backend/app/clients/google"
+	stripeclient "github.com/uniscoot/scooter-renting-backend/app/clients/stripe"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/config"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/server/middleware"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/server/public"
 	authsvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/auth"
 	maintsvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/maintenance"
+	oauthsvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/oauth"
+	paymentsvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/payments"
 	pmsvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/pricemodels"
 	rentalsvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/rentals"
 	scootersvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/scooters"
@@ -24,6 +29,7 @@ import (
 	zonesvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/zones"
 	storagepg "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres"
 	maintrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/maintenance"
+	paymentsrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/payments"
 	pmrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/pricemodels"
 	rentalsrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/rentals"
 	scootersrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/scooters"
@@ -79,6 +85,20 @@ func RunApi(version string) {
 			func(q *sqlc.Queries, p *pgxpool.Pool) *scootersrepo.Repository { return scootersrepo.New(q, p) },
 			func(q *sqlc.Queries, p *pgxpool.Pool) *rentalsrepo.Repository { return rentalsrepo.New(q, p) },
 			func(q *sqlc.Queries, p *pgxpool.Pool) *maintrepo.Repository { return maintrepo.New(q, p) },
+			func(q *sqlc.Queries, p *pgxpool.Pool) *paymentsrepo.Repository { return paymentsrepo.New(q, p) },
+		),
+
+		fx.Provide(
+			func(cfg *config.Config) *stripeclient.Client {
+				return stripeclient.New(cfg.Stripe.SecretKey, cfg.Stripe.WebhookSecret)
+			},
+			func(cfg *config.Config) (*googleclient.Client, error) {
+				gc, err := googleclient.New(context.Background(), cfg.Google.ClientID)
+				if err != nil {
+					return nil, fmt.Errorf("init google client: %w", err)
+				}
+				return gc, nil
+			},
 		),
 
 		fx.Provide(
@@ -87,26 +107,46 @@ func RunApi(version string) {
 			func(zr *zonesrepo.Repository) *zonesvc.Service { return zonesvc.New(zr) },
 			func(pr *pmrepo.Repository) *pmsvc.Service { return pmsvc.New(pr) },
 			func(sr *scootersrepo.Repository) *scootersvc.Service { return scootersvc.New(sr) },
-			func(pool *pgxpool.Pool, rr *rentalsrepo.Repository, sr *scootersrepo.Repository, pmR *pmrepo.Repository, log *zap.Logger) *rentalsvc.Service {
-				return rentalsvc.New(pool, rr, sr, pmR, log)
-			},
 			func(mr *maintrepo.Repository) *maintsvc.Service { return maintsvc.New(mr) },
+			func(sc *stripeclient.Client, pr *paymentsrepo.Repository, ur *usersrepo.Repository, pool *pgxpool.Pool, cfg *config.Config, log *zap.Logger) *paymentsvc.Service {
+				return paymentsvc.New(sc, pr, ur, pool, cfg, log)
+			},
+			func(pool *pgxpool.Pool, rr *rentalsrepo.Repository, sr *scootersrepo.Repository, pmR *pmrepo.Repository, ur *usersrepo.Repository, ps *paymentsvc.Service, log *zap.Logger) *rentalsvc.Service {
+				return rentalsvc.New(pool, rr, sr, pmR, ur, ps, log)
+			},
+			func(ur *usersrepo.Repository, as *authsvc.Service, gc *googleclient.Client, cfg *config.Config) *oauthsvc.Service {
+				return oauthsvc.New(ur, as, gc, cfg)
+			},
 		),
 
 		fx.Provide(
 			func(authS *authsvc.Service, cfg *config.Config, log *zap.Logger) *middleware.Middleware {
 				return middleware.New(authAdapter{svc: authS}, cfg, log)
 			},
-			func(cfg *config.Config, log *zap.Logger, authS *authsvc.Service, usersS *usersvc.Service, scootersS *scootersvc.Service, zonesS *zonesvc.Service, pmS *pmsvc.Service, rentalsS *rentalsvc.Service, maintS *maintsvc.Service) *public.Handler {
+			func(
+				cfg *config.Config,
+				log *zap.Logger,
+				authS *authsvc.Service,
+				oauthS *oauthsvc.Service,
+				usersS *usersvc.Service,
+				scootersS *scootersvc.Service,
+				zonesS *zonesvc.Service,
+				pmS *pmsvc.Service,
+				rentalsS *rentalsvc.Service,
+				maintS *maintsvc.Service,
+				paymentsS *paymentsvc.Service,
+			) *public.Handler {
 				return public.NewHandler(public.Deps{
 					Version:     cfg.Version,
 					Auth:        authS,
+					OAuth:       oauthS,
 					Users:       usersS,
 					Scooters:    scootersS,
 					Zones:       zonesS,
 					PriceModels: pmS,
 					Rentals:     rentalsS,
 					Maintenance: maintS,
+					Payments:    paymentsS,
 					Log:         log,
 				})
 			},

@@ -24,11 +24,16 @@ services:
       ENVIRONMENT: development
       POSTGRES_DSN: "postgres://uniscoot:uniscoot@postgres:5432/uniscoot?sslmode=disable"
       SERVER_ADDRESS: "0.0.0.0:8080"
-      JWT_SECRET: "dev-secret-change-me"
+      JWT_SECRET: "renatlobanov"
       JWT_ISSUER: "uniscoot"
       JWT_TTL: "24h"
       CORS_ALLOWED_ORIGINS: "*"
       BCRYPT_COST: "10"
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET}"
+      STRIPE_CURRENCY: "${STRIPE_CURRENCY:-usd}"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID}"
+      GOOGLE_HOSTED_DOMAIN: "${GOOGLE_HOSTED_DOMAIN:-}"
     depends_on:
       postgres:
         condition: service_healthy

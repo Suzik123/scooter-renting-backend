@@ -16,11 +16,19 @@ import (
 	"github.com/uniscoot/scooter-renting-backend/app/internal/models"
 )
 
+// PaymentResult is returned by End to surface the post-rental charge outcome.
+type PaymentResult struct {
+	ID            uuid.UUID
+	Status        string
+	ClientSecret  *string
+	FailureReason *string
+}
+
 type RentalsRepo interface {
 	CreateTx(ctx context.Context, tx pgx.Tx, rental *models.Rental) error
 	Get(ctx context.Context, id uuid.UUID) (*models.Rental, error)
 	GetForUpdateTx(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*models.Rental, error)
-	EndTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, endedAt time.Time, distanceM int, totalCost decimal.Decimal) (*models.Rental, error)
+	EndTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, endTime time.Time, endLat, endLon *decimal.Decimal, distanceM int, totalCost decimal.Decimal) (*models.Rental, error)
 	Cancel(ctx context.Context, id uuid.UUID) error
 	ListByUser(ctx context.Context, userID uuid.UUID, page models.Page) ([]models.Rental, int, error)
 }
@@ -33,15 +41,29 @@ type PriceModelRepo interface {
 	Get(ctx context.Context, id uuid.UUID) (*models.PriceModel, error)
 }
 
+// UsersRepo loads users for payment-related preconditions/charging.
+type UsersRepo interface {
+	GetByID(ctx context.Context, id uuid.UUID) (*models.User, error)
+}
+
+// PaymentsService captures the rentals' dependency on the payments domain.
+type PaymentsService interface {
+	UserHasPaymentMethod(ctx context.Context, userID uuid.UUID) (bool, error)
+	UserHasUnpaidRentals(ctx context.Context, userID uuid.UUID) (bool, error)
+	ChargeRental(ctx context.Context, rental *models.Rental, user *models.User) (*PaymentResult, error)
+}
+
 type Service struct {
 	pool        *pgxpool.Pool
 	rentals     RentalsRepo
 	scooters    ScootersRepo
 	pricemodels PriceModelRepo
+	users       UsersRepo
+	payments    PaymentsService
 	log         *zap.Logger
 }
 
-func New(pool *pgxpool.Pool, rentals RentalsRepo, scooters ScootersRepo, pricemodels PriceModelRepo, log *zap.Logger) *Service {
+func New(pool *pgxpool.Pool, rentals RentalsRepo, scooters ScootersRepo, pricemodels PriceModelRepo, users UsersRepo, payments PaymentsService, log *zap.Logger) *Service {
 	if log == nil {
 		log = zap.NewNop()
 	}
@@ -50,14 +72,33 @@ func New(pool *pgxpool.Pool, rentals RentalsRepo, scooters ScootersRepo, pricemo
 		rentals:     rentals,
 		scooters:    scooters,
 		pricemodels: pricemodels,
+		users:       users,
+		payments:    payments,
 		log:         log,
 	}
 }
 
-// Start opens a rental: locks the scooter from available->rented and inserts a new active rental.
-func (s *Service) Start(ctx context.Context, userID, scooterID, priceModelID uuid.UUID) (*models.Rental, error) {
+// Start opens a rental: enforces payment preconditions, then locks the scooter
+// from available -> rented and inserts a new active rental.
+func (s *Service) Start(ctx context.Context, userID, scooterID, priceModelID uuid.UUID, startLat, startLon *decimal.Decimal) (*models.Rental, error) {
 	if _, err := s.pricemodels.Get(ctx, priceModelID); err != nil {
 		return nil, err
+	}
+
+	hasPM, err := s.payments.UserHasPaymentMethod(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPM {
+		return nil, apperrors.Conflict("add_card_required")
+	}
+
+	hasUnpaid, err := s.payments.UserHasUnpaidRentals(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if hasUnpaid {
+		return nil, apperrors.Conflict("outstanding_balance")
 	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -79,7 +120,9 @@ func (s *Service) Start(ctx context.Context, userID, scooterID, priceModelID uui
 		UserID:       userID,
 		ScooterID:    scooterID,
 		PriceModelID: priceModelID,
-		StartedAt:    time.Now().UTC(),
+		StartTime:    time.Now().UTC(),
+		StartLat:     startLat,
+		StartLon:     startLon,
 		Status:       models.RentalActive,
 		DistanceM:    0,
 		TotalCost:    decimal.Zero,
@@ -95,20 +138,21 @@ func (s *Service) Start(ctx context.Context, userID, scooterID, priceModelID uui
 	return rental, nil
 }
 
-// End finalizes a rental: computes the total cost and releases the scooter.
-func (s *Service) End(ctx context.Context, rentalID, actorUserID uuid.UUID) (*models.Rental, error) {
+// End finalizes a rental: closes the rental in a tx, releases the scooter,
+// then attempts to charge the user via the payments service.
+func (s *Service) End(ctx context.Context, rentalID, actorUserID uuid.UUID, endLat, endLon *decimal.Decimal) (*models.Rental, *PaymentResult, error) {
 	existing, err := s.rentals.Get(ctx, rentalID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	pm, err := s.pricemodels.Get(ctx, existing.PriceModelID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
+		return nil, nil, fmt.Errorf("begin tx: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -119,33 +163,62 @@ func (s *Service) End(ctx context.Context, rentalID, actorUserID uuid.UUID) (*mo
 
 	locked, err := s.rentals.GetForUpdateTx(ctx, tx, rentalID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if locked.UserID != actorUserID {
-		return nil, apperrors.Forbidden("not rental owner")
+		return nil, nil, apperrors.Forbidden("not rental owner")
 	}
 	if locked.Status != models.RentalActive {
-		return nil, apperrors.RentalAlreadyEnded("")
+		return nil, nil, apperrors.RentalAlreadyEnded("")
 	}
 
 	now := time.Now().UTC()
-	duration := now.Sub(locked.StartedAt)
+	duration := now.Sub(locked.StartTime)
 	cost := CalculateCost(pm, duration)
 
-	updated, err := s.rentals.EndTx(ctx, tx, rentalID, now, 0, cost)
+	updated, err := s.rentals.EndTx(ctx, tx, rentalID, now, endLat, endLon, 0, cost)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := s.scooters.SetStatusTx(ctx, tx, locked.ScooterID, models.ScooterRented, models.ScooterAvailable); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit: %w", err)
+		return nil, nil, fmt.Errorf("commit: %w", err)
 	}
 	committed = true
-	return updated, nil
+
+	user, err := s.users.GetByID(ctx, actorUserID)
+	if err != nil {
+		s.log.Error("rentals.End: load user for charge", zap.String("user_id", actorUserID.String()), zap.Error(err))
+		reason := "user_lookup_failed"
+		return updated, &PaymentResult{
+			Status:        models.PaymentFailed,
+			FailureReason: &reason,
+		}, nil
+	}
+
+	pay, err := s.payments.ChargeRental(ctx, updated, user)
+	if err != nil {
+		// ChargeRental only returns err for system/programmer faults —
+		// card declines and missing payment methods are reported via
+		// pay.Status == 'failed'. Either way the rental stays closed,
+		// and the user is reblocked on next ride via the
+		// outstanding-balance precondition.
+		s.log.Error("rentals.End: charge rental system error",
+			zap.String("rental_id", updated.ID.String()),
+			zap.String("user_id", actorUserID.String()),
+			zap.Error(err),
+		)
+		reason := "payment_processing_error"
+		return updated, &PaymentResult{
+			Status:        models.PaymentFailed,
+			FailureReason: &reason,
+		}, nil
+	}
+	return updated, pay, nil
 }
 
 // AdminCancel forces an active rental to cancelled and releases the scooter.

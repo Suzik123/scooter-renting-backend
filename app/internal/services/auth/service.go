@@ -35,11 +35,12 @@ func New(cfg *config.Config, users UserRepo) *Service {
 }
 
 // Register creates a new user with role "user" and returns the user with a freshly issued JWT.
-func (s *Service) Register(ctx context.Context, email, name, password, phone string) (*models.User, string, error) {
+func (s *Service) Register(ctx context.Context, email, firstName, lastName, password, phoneNumber string) (*models.User, string, error) {
 	email = strings.TrimSpace(strings.ToLower(email))
-	name = strings.TrimSpace(name)
-	if email == "" || name == "" || password == "" {
-		return nil, "", apperrors.Invalid("email, name and password are required")
+	firstName = strings.TrimSpace(firstName)
+	lastName = strings.TrimSpace(lastName)
+	if email == "" || firstName == "" || password == "" {
+		return nil, "", apperrors.Invalid("email, first_name and password are required")
 	}
 
 	hash, err := hasher.Hash(password, s.cfg.Bcrypt.Cost)
@@ -49,12 +50,14 @@ func (s *Service) Register(ctx context.Context, email, name, password, phone str
 
 	u := &models.User{
 		Email:        email,
-		Name:         name,
+		FirstName:    firstName,
+		LastName:     lastName,
 		PasswordHash: &hash,
 		Role:         models.RoleUser,
+		Status:       models.UserActive,
 	}
-	if phone != "" {
-		u.Phone = &phone
+	if phoneNumber != "" {
+		u.PhoneNumber = &phoneNumber
 	}
 	if err := s.users.Create(ctx, u); err != nil {
 		return nil, "", err
@@ -117,4 +120,3 @@ func (s *Service) now() time.Time {
 	}
 	return s.clock()
 }
-

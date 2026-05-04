@@ -16,12 +16,12 @@ import (
 )
 
 type UpdatePatch struct {
-	Name          *string
-	PerMinuteRate *decimal.Decimal
-	UnlockFee     *decimal.Decimal
-	DailyCapSet   bool
-	DailyCap      *decimal.Decimal
-	Currency      *string
+	Name           *string
+	PricePerMinute *decimal.Decimal
+	UnlockFee      *decimal.Decimal
+	DailyCapSet    bool
+	DailyCap       *decimal.Decimal
+	Currency       *string
 }
 
 type Repository struct {
@@ -35,11 +35,11 @@ func New(q *sqlc.Queries, pool *pgxpool.Pool) *Repository {
 
 func (r *Repository) Create(ctx context.Context, pm *models.PriceModel) error {
 	row, err := r.q.CreatePriceModel(ctx, sqlc.CreatePriceModelParams{
-		Name:          pm.Name,
-		PerMinuteRate: pm.PerMinuteRate,
-		UnlockFee:     pm.UnlockFee,
-		DailyCap:      pm.DailyCap,
-		Currency:      pm.Currency,
+		Name:           pm.Name,
+		UnlockFee:      pm.UnlockFee,
+		PricePerMinute: pm.PricePerMinute,
+		Currency:       pm.Currency,
+		DailyCap:       pm.DailyCap,
 	})
 	if err != nil {
 		return fmt.Errorf("pricemodels.Create: %w", err)
@@ -79,13 +79,13 @@ func (r *Repository) List(ctx context.Context, page models.Page) ([]models.Price
 
 func (r *Repository) Update(ctx context.Context, id uuid.UUID, patch UpdatePatch) (*models.PriceModel, error) {
 	row, err := r.q.UpdatePriceModel(ctx, sqlc.UpdatePriceModelParams{
-		Name:          patch.Name,
-		PerMinuteRate: patch.PerMinuteRate,
-		UnlockFee:     patch.UnlockFee,
-		DailyCapSet:   patch.DailyCapSet,
-		DailyCap:      patch.DailyCap,
-		Currency:      patch.Currency,
-		ID:            id,
+		Name:           patch.Name,
+		PricePerMinute: patch.PricePerMinute,
+		UnlockFee:      patch.UnlockFee,
+		DailyCapSet:    patch.DailyCapSet,
+		DailyCap:       patch.DailyCap,
+		Currency:       patch.Currency,
+		PriceModelID:   id,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -110,13 +110,13 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 
 func fromSQLC(in sqlc.PriceModel) models.PriceModel {
 	return models.PriceModel{
-		ID:            in.ID,
-		Name:          in.Name,
-		PerMinuteRate: in.PerMinuteRate,
-		UnlockFee:     in.UnlockFee,
-		DailyCap:      in.DailyCap,
-		Currency:      in.Currency,
-		CreatedAt:     in.CreatedAt,
-		UpdatedAt:     in.UpdatedAt,
+		ID:             in.PriceModelID,
+		Name:           in.Name,
+		UnlockFee:      in.UnlockFee,
+		PricePerMinute: in.PricePerMinute,
+		Currency:       in.Currency,
+		DailyCap:       in.DailyCap,
+		CreatedAt:      in.CreatedAt,
+		UpdatedAt:      in.UpdatedAt,
 	}
 }

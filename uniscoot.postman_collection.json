@@ -1,0 +1,712 @@
+{
+  "info": {
+    "name": "Uniscoot API",
+    "description": "Scooter renting backend - local development",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "token", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "scooterId", "value": "" },
+    { "key": "priceModelId", "value": "" },
+    { "key": "zoneId", "value": "" },
+    { "key": "rentalId", "value": "" },
+    { "key": "maintenanceId", "value": "" },
+    { "key": "paymentMethodId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "Version",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/version", "host": ["{{baseUrl}}"], "path": ["version"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const data = res.data || res;",
+                  "if (data.token) pm.collectionVariables.set('token', data.token);",
+                  "if (data.user && data.user.user_id) pm.collectionVariables.set('userId', data.user.user_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"demo@example.com\",\n  \"first_name\": \"Demo\",\n  \"last_name\": \"User\",\n  \"password\": \"password123\",\n  \"phone_number\": \"+10000000000\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "OAuth Google",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const data = res.data || res;",
+                  "if (data.token) pm.collectionVariables.set('token', data.token);",
+                  "if (data.user && data.user.user_id) pm.collectionVariables.set('userId', data.user.user_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id_token\": \"<paste-google-id-token>\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/oauth/google",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "oauth", "google"]
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const data = res.data || res;",
+                  "if (data.token) pm.collectionVariables.set('token', data.token);",
+                  "if (data.user && data.user.user_id) pm.collectionVariables.set('userId', data.user.user_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"demo@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "login"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Public Reads",
+      "item": [
+        {
+          "name": "List scooters",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/scooters?limit=10&offset=0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "scooters"],
+              "query": [
+                { "key": "limit", "value": "10" },
+                { "key": "offset", "value": "0" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Nearby scooters",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/scooters/nearby?lat=50.45&lng=30.52&radius=2000&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "scooters", "nearby"],
+              "query": [
+                { "key": "lat", "value": "50.45" },
+                { "key": "lng", "value": "30.52" },
+                { "key": "radius", "value": "2000" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get scooter by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/scooters/{{scooterId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "scooters", "{{scooterId}}"]
+            }
+          }
+        },
+        {
+          "name": "List zones",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/zones?limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "zones"],
+              "query": [{ "key": "limit", "value": "10" }]
+            }
+          }
+        },
+        {
+          "name": "List price models",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/price-models?limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "price-models"],
+              "query": [{ "key": "limit", "value": "10" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users (auth)",
+      "item": [
+        {
+          "name": "Get user",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "{{userId}}"]
+            }
+          }
+        },
+        {
+          "name": "Update user",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Demo\",\n  \"last_name\": \"Renamed\",\n  \"phone_number\": \"+19999999999\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "{{userId}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete user",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "{{userId}}"]
+            }
+          }
+        },
+        {
+          "name": "List my payments",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/payments?limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "{{userId}}", "payments"],
+              "query": [{ "key": "limit", "value": "10" }]
+            }
+          }
+        },
+        {
+          "name": "List my rentals",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/rentals?limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "{{userId}}", "rentals"],
+              "query": [{ "key": "limit", "value": "10" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rentals (auth)",
+      "item": [
+        {
+          "name": "Start rental",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const data = res.data || res;",
+                  "if (data.rental_id) pm.collectionVariables.set('rentalId', data.rental_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scooter_id\": \"{{scooterId}}\",\n  \"price_model_id\": \"{{priceModelId}}\",\n  \"start_lat\": \"50.4501\",\n  \"start_lon\": \"30.5234\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/rentals",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "rentals"]
+            }
+          }
+        },
+        {
+          "name": "Get rental",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/rentals/{{rentalId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "rentals", "{{rentalId}}"]
+            }
+          }
+        },
+        {
+          "name": "End rental",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"end_lat\": \"50.4520\",\n  \"end_lon\": \"30.5250\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/rentals/{{rentalId}}/end",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "rentals", "{{rentalId}}", "end"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments (auth)",
+      "item": [
+        {
+          "name": "Create setup intent",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/setup-intent",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "setup-intent"]
+            }
+          }
+        },
+        {
+          "name": "List payment methods",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const data = res.data || res;",
+                  "if (data.methods && data.methods.length > 0) pm.collectionVariables.set('paymentMethodId', data.methods[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/methods",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "methods"]
+            }
+          }
+        },
+        {
+          "name": "Detach payment method",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/methods/{{paymentMethodId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "methods", "{{paymentMethodId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Stripe webhook",
+      "item": [
+        {
+          "name": "Test webhook (use stripe CLI)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Stripe-Signature", "value": "<signature-from-stripe>" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/stripe",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "stripe"]
+            },
+            "description": "In real testing, use `stripe listen --forward-to localhost:8080/webhooks/stripe`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - Scooters",
+      "item": [
+        {
+          "name": "Create scooter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const data = res.data || res;",
+                  "if (data.scooter_id) pm.collectionVariables.set('scooterId', data.scooter_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"qr_code\": \"SCT-001\",\n  \"model\": \"Xiaomi Pro 2\",\n  \"zone_id\": \"{{zoneId}}\",\n  \"lat\": \"50.4501\",\n  \"lng\": \"30.5234\",\n  \"battery_level\": 95\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/scooters",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "scooters"]
+            }
+          }
+        },
+        {
+          "name": "Update scooter",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"available\",\n  \"battery_level\": 88\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/scooters/{{scooterId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "scooters", "{{scooterId}}"]
+            }
+          }
+        },
+        {
+          "name": "Retire scooter",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/scooters/{{scooterId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "scooters", "{{scooterId}}"]
+            }
+          }
+        },
+        {
+          "name": "Open maintenance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const data = res.data || res;",
+                  "if (data.maintenance_id) pm.collectionVariables.set('maintenanceId', data.maintenance_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"technician_name\": \"Tech One\",\n  \"issue_description\": \"Flat tire\",\n  \"repair_cost\": \"19.99\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/scooters/{{scooterId}}/maintenance",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "scooters", "{{scooterId}}", "maintenance"]
+            }
+          }
+        },
+        {
+          "name": "List maintenance for scooter",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/scooters/{{scooterId}}/maintenance?limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "scooters", "{{scooterId}}", "maintenance"],
+              "query": [{ "key": "limit", "value": "10" }]
+            }
+          }
+        },
+        {
+          "name": "Close maintenance",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/maintenance/{{maintenanceId}}/close",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "maintenance", "{{maintenanceId}}", "close"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - Zones",
+      "item": [
+        {
+          "name": "Create zone",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const data = res.data || res;",
+                  "if (data.zone_id) pm.collectionVariables.set('zoneId', data.zone_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Central\",\n  \"center_lat\": \"50.4501\",\n  \"center_lon\": \"30.5234\",\n  \"radius_meters\": 5000,\n  \"zone_type\": \"service\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/zones",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "zones"]
+            }
+          }
+        },
+        {
+          "name": "Update zone",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Central - renamed\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/zones/{{zoneId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "zones", "{{zoneId}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete zone",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/zones/{{zoneId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "zones", "{{zoneId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - Price models",
+      "item": [
+        {
+          "name": "Create price model",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const res = pm.response.json();",
+                  "const data = res.data || res;",
+                  "if (data.price_model_id) pm.collectionVariables.set('priceModelId', data.price_model_id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Standard\",\n  \"price_per_minute\": \"0.25\",\n  \"unlock_fee\": \"1.00\",\n  \"daily_cap\": \"25.00\",\n  \"currency\": \"USD\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/price-models",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "price-models"]
+            }
+          }
+        },
+        {
+          "name": "Update price model",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price_per_minute\": \"0.30\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/price-models/{{priceModelId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "price-models", "{{priceModelId}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete price model",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/price-models/{{priceModelId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "price-models", "{{priceModelId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - Rentals",
+      "item": [
+        {
+          "name": "Cancel rental",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/rentals/{{rentalId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "rentals", "{{rentalId}}"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

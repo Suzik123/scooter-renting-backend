@@ -8,11 +8,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/shopspring/decimal"
 
 	"github.com/uniscoot/scooter-renting-backend/app/internal/apperrors"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/models"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/sqlc"
 )
+
+type UpdatePatch struct {
+	Name         *string
+	CenterLat    *decimal.Decimal
+	CenterLon    *decimal.Decimal
+	RadiusMeters *int
+	ZoneType     *string
+}
 
 type Repository struct {
 	q    *sqlc.Queries
@@ -24,7 +33,13 @@ func New(q *sqlc.Queries, pool *pgxpool.Pool) *Repository {
 }
 
 func (r *Repository) Create(ctx context.Context, z *models.Zone) error {
-	row, err := r.q.CreateZone(ctx, sqlc.CreateZoneParams{Name: z.Name, Boundary: z.Boundary})
+	row, err := r.q.CreateZone(ctx, sqlc.CreateZoneParams{
+		Name:         z.Name,
+		CenterLat:    z.CenterLat,
+		CenterLon:    z.CenterLon,
+		RadiusMeters: int32(z.RadiusMeters),
+		ZoneType:     nilIfEmpty(z.ZoneType),
+	})
 	if err != nil {
 		return fmt.Errorf("zones.Create: %w", err)
 	}
@@ -61,8 +76,20 @@ func (r *Repository) List(ctx context.Context, page models.Page) ([]models.Zone,
 	return out, int(total), nil
 }
 
-func (r *Repository) Update(ctx context.Context, id uuid.UUID, name *string, boundary *string) (*models.Zone, error) {
-	row, err := r.q.UpdateZone(ctx, sqlc.UpdateZoneParams{Name: name, Boundary: boundary, ID: id})
+func (r *Repository) Update(ctx context.Context, id uuid.UUID, patch UpdatePatch) (*models.Zone, error) {
+	var radius *int32
+	if patch.RadiusMeters != nil {
+		v := int32(*patch.RadiusMeters)
+		radius = &v
+	}
+	row, err := r.q.UpdateZone(ctx, sqlc.UpdateZoneParams{
+		Name:         patch.Name,
+		CenterLat:    patch.CenterLat,
+		CenterLon:    patch.CenterLon,
+		RadiusMeters: radius,
+		ZoneType:     patch.ZoneType,
+		ZoneID:       id,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperrors.NotFound("zone")
@@ -84,12 +111,22 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func nilIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func fromSQLCZone(in sqlc.Zone) models.Zone {
 	return models.Zone{
-		ID:        in.ID,
-		Name:      in.Name,
-		Boundary:  in.Boundary,
-		CreatedAt: in.CreatedAt,
-		UpdatedAt: in.UpdatedAt,
+		ID:           in.ZoneID,
+		Name:         in.Name,
+		CenterLat:    in.CenterLat,
+		CenterLon:    in.CenterLon,
+		RadiusMeters: int(in.RadiusMeters),
+		ZoneType:     in.ZoneType,
+		CreatedAt:    in.CreatedAt,
+		UpdatedAt:    in.UpdatedAt,
 	}
 }

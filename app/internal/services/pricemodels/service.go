@@ -29,20 +29,20 @@ func New(repo Repo) *Service {
 }
 
 type CreateInput struct {
-	Name          string
-	PerMinuteRate decimal.Decimal
-	UnlockFee     decimal.Decimal
-	DailyCap      *decimal.Decimal
-	Currency      string
+	Name           string
+	PricePerMinute decimal.Decimal
+	UnlockFee      decimal.Decimal
+	DailyCap       *decimal.Decimal
+	Currency       string
 }
 
 type UpdatePatch struct {
-	Name          *string
-	PerMinuteRate *decimal.Decimal
-	UnlockFee     *decimal.Decimal
-	DailyCapSet   bool
-	DailyCap      *decimal.Decimal
-	Currency      *string
+	Name           *string
+	PricePerMinute *decimal.Decimal
+	UnlockFee      *decimal.Decimal
+	DailyCapSet    bool
+	DailyCap       *decimal.Decimal
+	Currency       *string
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (*models.PriceModel, error) {
@@ -50,7 +50,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*models.PriceMode
 	if name == "" {
 		return nil, apperrors.Invalid("name is required")
 	}
-	if in.PerMinuteRate.Sign() < 0 || in.UnlockFee.Sign() < 0 {
+	if in.PricePerMinute.Sign() < 0 || in.UnlockFee.Sign() < 0 {
 		return nil, apperrors.Invalid("rates must be non-negative")
 	}
 	if in.DailyCap != nil && in.DailyCap.Sign() < 0 {
@@ -58,18 +58,18 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*models.PriceMode
 	}
 	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
 	if currency == "" {
-		currency = "PLN"
+		currency = "USD"
 	}
 	if len(currency) != 3 {
 		return nil, apperrors.Invalid("currency must be a 3-letter code")
 	}
 
 	pm := &models.PriceModel{
-		Name:          name,
-		PerMinuteRate: in.PerMinuteRate,
-		UnlockFee:     in.UnlockFee,
-		DailyCap:      in.DailyCap,
-		Currency:      currency,
+		Name:           name,
+		PricePerMinute: in.PricePerMinute,
+		UnlockFee:      in.UnlockFee,
+		DailyCap:       in.DailyCap,
+		Currency:       currency,
 	}
 	if err := s.repo.Create(ctx, pm); err != nil {
 		return nil, err
@@ -94,12 +94,12 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, patch UpdatePatch) (
 		patch.Currency = &v
 	}
 	return s.repo.Update(ctx, id, pmrepo.UpdatePatch{
-		Name:          patch.Name,
-		PerMinuteRate: patch.PerMinuteRate,
-		UnlockFee:     patch.UnlockFee,
-		DailyCapSet:   patch.DailyCapSet,
-		DailyCap:      patch.DailyCap,
-		Currency:      patch.Currency,
+		Name:           patch.Name,
+		PricePerMinute: patch.PricePerMinute,
+		UnlockFee:      patch.UnlockFee,
+		DailyCapSet:    patch.DailyCapSet,
+		DailyCap:       patch.DailyCap,
+		Currency:       patch.Currency,
 	})
 }
 

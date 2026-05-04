@@ -20,9 +20,15 @@ type ErrorEnvelope struct {
 }
 
 // APIError describes a domain/http error returned to clients.
+//
+// Kind is a stable, machine-readable identifier used by the frontend to
+// branch on specific business outcomes (e.g. add_card_required). Code is
+// kept for backwards compatibility with Postman scripts and any other
+// consumer that already keys off it.
 type APIError struct {
 	HTTPCode int    `json:"-"`
 	Code     string `json:"code"`
+	Kind     string `json:"kind"`
 	Message  string `json:"message"`
 }
 

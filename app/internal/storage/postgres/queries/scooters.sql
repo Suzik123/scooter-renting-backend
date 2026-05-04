@@ -1,18 +1,18 @@
 -- name: CreateScooter :one
-INSERT INTO scooters (code, model, battery_pct, status, zone_id, lat, lng)
+INSERT INTO scooters (qr_code, battery_level, status, zone_id, model, lat, lng)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, code, model, battery_pct, status, zone_id, lat, lng, created_at, updated_at, deleted_at;
+RETURNING scooter_id, qr_code, battery_level, status, zone_id, model, lat, lng, created_at, updated_at, deleted_at;
 
 -- name: GetScooter :one
-SELECT id, code, model, battery_pct, status, zone_id, lat, lng, created_at, updated_at, deleted_at
+SELECT scooter_id, qr_code, battery_level, status, zone_id, model, lat, lng, created_at, updated_at, deleted_at
 FROM scooters
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE scooter_id = $1 AND deleted_at IS NULL;
 
 -- name: ListScooters :many
-SELECT id, code, model, battery_pct, status, zone_id, lat, lng, created_at, updated_at, deleted_at
+SELECT scooter_id, qr_code, battery_level, status, zone_id, model, lat, lng, created_at, updated_at, deleted_at
 FROM scooters
 WHERE deleted_at IS NULL
-  AND (sqlc.narg('status')::varchar IS NULL OR status = sqlc.narg('status'))
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
   AND (sqlc.narg('zone_id')::uuid IS NULL OR zone_id = sqlc.narg('zone_id'))
 ORDER BY created_at DESC
 LIMIT sqlc.arg('lim') OFFSET sqlc.arg('off');
@@ -20,29 +20,30 @@ LIMIT sqlc.arg('lim') OFFSET sqlc.arg('off');
 -- name: CountScooters :one
 SELECT COUNT(*) FROM scooters
 WHERE deleted_at IS NULL
-  AND (sqlc.narg('status')::varchar IS NULL OR status = sqlc.narg('status'))
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
   AND (sqlc.narg('zone_id')::uuid IS NULL OR zone_id = sqlc.narg('zone_id'));
 
 -- name: UpdateScooter :one
 UPDATE scooters
-SET model = COALESCE(sqlc.narg('model'), model),
-    status = COALESCE(sqlc.narg('status'), status),
-    zone_id = CASE WHEN sqlc.arg('zone_id_set')::boolean THEN sqlc.narg('zone_id') ELSE zone_id END,
-    battery_pct = COALESCE(sqlc.narg('battery_pct'), battery_pct),
-    lat = CASE WHEN sqlc.arg('lat_set')::boolean THEN sqlc.narg('lat') ELSE lat END,
-    lng = CASE WHEN sqlc.arg('lng_set')::boolean THEN sqlc.narg('lng') ELSE lng END,
-    updated_at = NOW()
-WHERE id = sqlc.arg('id') AND deleted_at IS NULL
-RETURNING id, code, model, battery_pct, status, zone_id, lat, lng, created_at, updated_at, deleted_at;
+SET model         = COALESCE(sqlc.narg('model'), model),
+    status        = COALESCE(sqlc.narg('status'), status),
+    zone_id       = CASE WHEN sqlc.arg('zone_id_set')::boolean THEN sqlc.narg('zone_id') ELSE zone_id END,
+    battery_level = COALESCE(sqlc.narg('battery_level'), battery_level),
+    lat           = CASE WHEN sqlc.arg('lat_set')::boolean THEN sqlc.narg('lat') ELSE lat END,
+    lng           = CASE WHEN sqlc.arg('lng_set')::boolean THEN sqlc.narg('lng') ELSE lng END,
+    updated_at    = NOW()
+WHERE scooter_id = sqlc.arg('scooter_id') AND deleted_at IS NULL
+RETURNING scooter_id, qr_code, battery_level, status, zone_id, model, lat, lng, created_at, updated_at, deleted_at;
 
 -- name: RetireScooter :execrows
 UPDATE scooters
 SET deleted_at = NOW(),
+    status     = 'retired',
     updated_at = NOW()
-WHERE id = $1 AND deleted_at IS NULL;
+WHERE scooter_id = $1 AND deleted_at IS NULL;
 
 -- name: FindNearbyScooters :many
-SELECT id, code, model, battery_pct, status, zone_id, lat, lng, created_at, updated_at, deleted_at
+SELECT scooter_id, qr_code, battery_level, status, zone_id, model, lat, lng, created_at, updated_at, deleted_at
 FROM scooters
 WHERE status = 'available'
   AND deleted_at IS NULL
@@ -56,7 +57,7 @@ LIMIT sqlc.arg('lim');
 UPDATE scooters
 SET status = sqlc.arg('to_status'),
     updated_at = NOW()
-WHERE id = sqlc.arg('id')
+WHERE scooter_id = sqlc.arg('scooter_id')
   AND status = sqlc.arg('from_status')
   AND deleted_at IS NULL
-RETURNING id;
+RETURNING scooter_id;
