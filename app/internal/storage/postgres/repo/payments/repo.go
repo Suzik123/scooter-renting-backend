@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
@@ -31,6 +34,16 @@ type AttachIntentInput struct {
 	ProviderPaymentID string
 	Status            string
 	FailureReason     *string
+}
+
+// CreateOfflineInput captures the input to CreateOffline.
+type CreateOfflineInput struct {
+	UserID         uuid.UUID
+	RentalID       uuid.UUID
+	Amount         decimal.Decimal
+	Currency       string
+	ApproverID     uuid.UUID
+	IdempotencyKey string
 }
 
 type Repository struct {
@@ -182,6 +195,89 @@ func (r *Repository) ListByUser(ctx context.Context, userID uuid.UUID, page mode
 	return out, int(total), nil
 }
 
+// ListByUserSince returns payments newer than since (inclusive), paginated.
+func (r *Repository) ListByUserSince(ctx context.Context, userID uuid.UUID, since time.Time, page models.Page) ([]models.Payment, int, error) {
+	page = page.Clamp()
+	total, err := r.q.CountPaymentsByUserSince(ctx, sqlc.CountPaymentsByUserSinceParams{
+		UserID: userID,
+		Since:  since,
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("payments.ListByUserSince count: %w", err)
+	}
+	rows, err := r.q.ListPaymentsByUserSince(ctx, sqlc.ListPaymentsByUserSinceParams{
+		UserID: userID,
+		Since:  since,
+		Limit:  int32(page.Limit),
+		Offset: int32(page.Offset),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("payments.ListByUserSince: %w", err)
+	}
+	out := make([]models.Payment, len(rows))
+	for i, row := range rows {
+		out[i] = fromSQLC(row)
+	}
+	return out, int(total), nil
+}
+
+// CreateOffline inserts a new offline payment row with status='succeeded'.
+// On idempotency-key conflict the existing row is returned with replay=true.
+func (r *Repository) CreateOffline(ctx context.Context, in CreateOfflineInput) (*models.Payment, bool, error) {
+	var idemArg *string
+	if in.IdempotencyKey != "" {
+		k := in.IdempotencyKey
+		idemArg = &k
+	}
+	row, err := r.q.CreateOfflinePayment(ctx, sqlc.CreateOfflinePaymentParams{
+		UserID:            in.UserID,
+		RentalID:          &in.RentalID,
+		Amount:            in.Amount,
+		Currency:          in.Currency,
+		OfflineApprovedBy: &in.ApproverID,
+		IdempotencyKey:    idemArg,
+	})
+	if err != nil {
+		// ON CONFLICT DO NOTHING returns ErrNoRows for the replay case.
+		if errors.Is(err, pgx.ErrNoRows) && in.IdempotencyKey != "" {
+			existing, gerr := r.GetByIdempotencyKey(ctx, in.IdempotencyKey)
+			if gerr != nil {
+				return nil, false, fmt.Errorf("payments.CreateOffline replay lookup: %w", gerr)
+			}
+			return existing, true, nil
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation && in.IdempotencyKey != "" {
+			existing, gerr := r.GetByIdempotencyKey(ctx, in.IdempotencyKey)
+			if gerr != nil {
+				return nil, false, fmt.Errorf("payments.CreateOffline replay lookup: %w", gerr)
+			}
+			return existing, true, nil
+		}
+		return nil, false, fmt.Errorf("payments.CreateOffline: %w", err)
+	}
+	p := fromSQLC(row)
+	return &p, false, nil
+}
+
+// GetByIdempotencyKey returns the payment that owns the given idempotency key
+// or a NotFound apperror.
+func (r *Repository) GetByIdempotencyKey(ctx context.Context, key string) (*models.Payment, error) {
+	if key == "" {
+		return nil, apperrors.NotFound("payment")
+	}
+	k := key
+	row, err := r.q.GetPaymentByIdempotencyKey(ctx, &k)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperrors.NotFound("payment")
+		}
+		return nil, fmt.Errorf("payments.GetByIdempotencyKey: %w", err)
+	}
+	p := fromSQLC(row)
+	return &p, nil
+}
+
 func (r *Repository) HasUnpaidRentals(ctx context.Context, userID uuid.UUID) (bool, error) {
 	v, err := r.q.HasUnpaidRentals(ctx, userID)
 	if err != nil {
@@ -233,5 +329,8 @@ func fromSQLC(in sqlc.Payment) models.Payment {
 		FailureReason:     in.FailureReason,
 		TransactionDate:   in.TransactionDate,
 		UpdatedAt:         in.UpdatedAt,
+		OfflineApprovedBy: in.OfflineApprovedBy,
+		OfflineApprovedAt: in.OfflineApprovedAt,
+		IdempotencyKey:    in.IdempotencyKey,
 	}
 }

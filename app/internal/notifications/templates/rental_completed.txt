@@ -1,0 +1,12 @@
+Ride summary
+
+Hi {{.UserName}},
+
+Thanks for riding with UniScoot. Here is your trip summary:
+
+- Rental id: {{.RentalID}}
+- Duration: {{.DurationS}}s
+- Distance: {{.DistanceM}}m
+- Total cost: {{.TotalCost}} {{.Currency}}
+
+You will receive a separate email when the payment is processed.

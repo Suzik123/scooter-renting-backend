@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
@@ -11,6 +13,8 @@ import (
 type Identity struct {
 	UserID uuid.UUID
 	Role   string
+	JTI    string
+	Token  string
 }
 
 // ContextKey is a typed key used to store values in fiber.Ctx locals.
@@ -23,9 +27,10 @@ const (
 	KeyIdentity ContextKey = "identity"
 )
 
-// AuthParser extracts user id and role from a bearer token.
+// AuthParser extracts user id, role and jti from a bearer token.
 type AuthParser interface {
-	Parse(token string) (userID uuid.UUID, role string, err error)
+	Parse(token string) (userID uuid.UUID, role, jti string, err error)
+	IsRevoked(ctx context.Context, jti string) (bool, error)
 }
 
 // Middleware groups all HTTP middlewares for the API.

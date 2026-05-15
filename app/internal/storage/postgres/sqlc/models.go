@@ -34,6 +34,9 @@ type Payment struct {
 	FailureReason     *string         `db:"failure_reason"`
 	TransactionDate   time.Time       `db:"transaction_date"`
 	UpdatedAt         time.Time       `db:"updated_at"`
+	OfflineApprovedBy *uuid.UUID      `db:"offline_approved_by"`
+	OfflineApprovedAt *time.Time      `db:"offline_approved_at"`
+	IdempotencyKey    *string         `db:"idempotency_key"`
 }
 
 type PriceModel struct {
@@ -80,19 +83,20 @@ type Scooter struct {
 }
 
 type User struct {
-	UserID           uuid.UUID `db:"user_id"`
-	FirstName        string    `db:"first_name"`
-	LastName         string    `db:"last_name"`
-	Email            string    `db:"email"`
-	PhoneNumber      *string   `db:"phone_number"`
-	RegistrationDate time.Time `db:"registration_date"`
-	Status           string    `db:"status"`
-	Role             string    `db:"role"`
-	PasswordHash     *string   `db:"password_hash"`
-	OauthProvider    *string   `db:"oauth_provider"`
-	OauthSubject     *string   `db:"oauth_subject"`
-	StripeCustomerID *string   `db:"stripe_customer_id"`
-	UpdatedAt        time.Time `db:"updated_at"`
+	UserID           uuid.UUID  `db:"user_id"`
+	FirstName        string     `db:"first_name"`
+	LastName         string     `db:"last_name"`
+	Email            string     `db:"email"`
+	PhoneNumber      *string    `db:"phone_number"`
+	RegistrationDate time.Time  `db:"registration_date"`
+	Status           string     `db:"status"`
+	Role             string     `db:"role"`
+	PasswordHash     *string    `db:"password_hash"`
+	OauthProvider    *string    `db:"oauth_provider"`
+	OauthSubject     *string    `db:"oauth_subject"`
+	StripeCustomerID *string    `db:"stripe_customer_id"`
+	UpdatedAt        time.Time  `db:"updated_at"`
+	LastLogoutAt     *time.Time `db:"last_logout_at"`
 }
 
 type WebhookEvent struct {

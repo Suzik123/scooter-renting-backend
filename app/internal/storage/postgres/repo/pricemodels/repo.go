@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 
@@ -100,6 +101,10 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, patch UpdatePatch
 func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 	n, err := r.q.DeletePriceModel(ctx, id)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" { // foreign_key_violation
+			return apperrors.Conflict("price model is referenced by rentals")
+		}
 		return fmt.Errorf("pricemodels.Delete: %w", err)
 	}
 	if n == 0 {

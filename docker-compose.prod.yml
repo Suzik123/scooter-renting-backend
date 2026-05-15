@@ -1,0 +1,125 @@
+# Production-oriented compose file. Differences from the dev `docker-compose.yml`:
+#   1. NO `stripe-cli` — webhooks come from real Stripe via a Dashboard-registered
+#      endpoint (https://your.domain/webhooks/stripe). Set STRIPE_WEBHOOK_SECRET in
+#      .env from the signing secret you copied from the Stripe Dashboard.
+#   2. NO `mailhog` — replace with a real SMTP relay (SendGrid, AWS SES, Mailgun).
+#      Set SMTP_HOST/PORT/USER/PASSWORD/FROM in .env accordingly.
+#   3. Bind ports defensively (postgres/redis/rabbitmq stay on the internal docker
+#      network only — no host-port exposure).
+#   4. STRIPE_SECRET_KEY must be a `sk_live_…` key, not a `sk_test_…` one.
+#   5. JWT_SECRET must be a fresh long random string (not the dev placeholder).
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# To put api behind TLS, front the whole thing with a reverse proxy (caddy,
+# traefik, nginx, fly-proxy, ...). This file does NOT include TLS termination.
+
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:?set in .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?set in .env}"
+      POSTGRES_DB: "${POSTGRES_DB:?set in .env}"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [uniscoot]
+    # No host port — only api/worker reach it inside the network.
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+    networks: [uniscoot]
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER:?set in .env}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:?set in .env}"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      retries: 20
+    networks: [uniscoot]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      POSTGRES_DSN: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      SERVER_ADDRESS: "0.0.0.0:8080"
+      JWT_SECRET: "${JWT_SECRET:?set in .env}"
+      JWT_ISSUER: "uniscoot"
+      JWT_TTL: "24h"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:?set in .env, e.g. https://app.uniscoot.io}"
+      BCRYPT_COST: "12"
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:?live sk_live_… key required in prod}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:?signing secret from Stripe Dashboard webhook}"
+      STRIPE_CURRENCY: "${STRIPE_CURRENCY:-usd}"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID}"
+      GOOGLE_HOSTED_DOMAIN: "${GOOGLE_HOSTED_DOMAIN:-}"
+      REDIS_URL: "redis://redis:6379/0"
+      RABBIT_URL: "amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/"
+      RABBIT_PUBLISH_TIMEOUT: "5s"
+      SMTP_HOST: "${SMTP_HOST:?set to your SMTP relay}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USER: "${SMTP_USER}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD}"
+      SMTP_FROM: "${SMTP_FROM:?set to a verified sender address}"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:8080:8080"   # bind to localhost; expose via reverse proxy
+    networks: [uniscoot]
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: production
+      POSTGRES_DSN: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      JWT_SECRET: "${JWT_SECRET}"
+      JWT_ISSUER: "uniscoot"
+      JWT_TTL: "24h"
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET}"
+      STRIPE_CURRENCY: "${STRIPE_CURRENCY:-usd}"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID}"
+      REDIS_URL: "redis://redis:6379/0"
+      RABBIT_URL: "amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/"
+      RABBIT_PUBLISH_TIMEOUT: "5s"
+      SMTP_HOST: "${SMTP_HOST}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USER: "${SMTP_USER}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD}"
+      SMTP_FROM: "${SMTP_FROM}"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    networks: [uniscoot]
+
+volumes:
+  pg_data: {}
+
+networks:
+  uniscoot: {}

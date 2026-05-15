@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<body style="font-family: -apple-system, system-ui, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px;">
+  <h2>Ride summary</h2>
+  <p>Hi {{.UserName}},</p>
+  <p>Thanks for riding with UniScoot. Here is your trip summary:</p>
+  <ul>
+    <li>Rental id: <code>{{.RentalID}}</code></li>
+    <li>Duration: {{.DurationS}}s</li>
+    <li>Distance: {{.DistanceM}}m</li>
+    <li>Total cost: {{.TotalCost}} {{.Currency}}</li>
+  </ul>
+  <p>You will receive a separate email when the payment is processed.</p>
+</body>
+</html>

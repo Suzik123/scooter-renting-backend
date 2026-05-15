@@ -1,0 +1,10 @@
+Payment failed
+
+Hi {{.UserName}},
+
+We were unable to charge {{.Amount}} {{.Currency}} for your recent UniScoot ride.
+{{if .FailureReason}}Reason: {{.FailureReason}}{{end}}
+
+Please update your payment method in the app before starting your next ride.
+
+Payment id: {{.PaymentID}}

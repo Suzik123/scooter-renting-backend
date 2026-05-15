@@ -3,7 +3,7 @@ export
 
 DB_DSN ?= postgres://uniscoot:uniscoot@localhost:5432/uniscoot?sslmode=disable
 
-.PHONY: migrate-up migrate-down migrate-status lint test run-api docker-up docker-down tidy sqlc
+.PHONY: migrate-up migrate-down migrate-status lint test test-unit test-integration cover run-api run-worker docker-up docker-down tidy sqlc
 
 migrate-up:
 	GOOSE_DRIVER=postgres \
@@ -29,8 +29,21 @@ lint:
 test:
 	go test ./...
 
+test-unit:
+	go test ./...
+
+test-integration:
+	INTEGRATION=1 go test -tags=integration ./...
+
+cover:
+	go test -coverpkg=./app/internal/services/... -coverprofile=cover.out ./... \
+	  && go tool cover -func=cover.out | tail -1
+
 run-api:
 	go run ./app/cmd/api
+
+run-worker:
+	go run ./app/cmd/worker
 
 tidy:
 	go mod tidy

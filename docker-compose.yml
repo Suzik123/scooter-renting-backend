@@ -16,10 +16,54 @@ services:
       retries: 20
     networks: [uniscoot]
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 20
+    networks: [uniscoot]
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: uniscoot
+      RABBITMQ_DEFAULT_PASS: uniscoot
+    healthcheck:
+      # check_port_connectivity verifies the AMQP listener accepts TCP, which
+      # is what api/worker actually need — plain `ping` flips green seconds
+      # before the listener is bound.
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      retries: 20
+    networks: [uniscoot]
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks: [uniscoot]
+
+  stripe-cli:
+    image: stripe/stripe-cli:latest
+    command: listen --forward-to api:8080/webhooks/stripe --api-key ${STRIPE_SECRET_KEY} --skip-verify
+    environment:
+      STRIPE_API_KEY: "${STRIPE_SECRET_KEY}"
+    depends_on:
+      - api
+    networks: [uniscoot]
+
   api:
     build:
       context: .
       dockerfile: Dockerfile.api
+    restart: on-failure
     environment:
       ENVIRONMENT: development
       POSTGRES_DSN: "postgres://uniscoot:uniscoot@postgres:5432/uniscoot?sslmode=disable"
@@ -34,11 +78,54 @@ services:
       STRIPE_CURRENCY: "${STRIPE_CURRENCY:-usd}"
       GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID}"
       GOOGLE_HOSTED_DOMAIN: "${GOOGLE_HOSTED_DOMAIN:-}"
+      REDIS_URL: "redis://redis:6379/0"
+      RABBIT_URL: "amqp://uniscoot:uniscoot@rabbitmq:5672/"
+      RABBIT_PUBLISH_TIMEOUT: "5s"
+      SMTP_HOST: "mailhog"
+      SMTP_PORT: "1025"
+      SMTP_FROM: "noreply@uniscoot.local"
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     ports:
       - "8080:8080"
+    networks: [uniscoot]
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: on-failure
+    environment:
+      ENVIRONMENT: development
+      POSTGRES_DSN: "postgres://uniscoot:uniscoot@postgres:5432/uniscoot?sslmode=disable"
+      JWT_SECRET: "renatlobanov"
+      JWT_ISSUER: "uniscoot"
+      JWT_TTL: "24h"
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET}"
+      STRIPE_CURRENCY: "${STRIPE_CURRENCY:-usd}"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID}"
+      GOOGLE_HOSTED_DOMAIN: "${GOOGLE_HOSTED_DOMAIN:-}"
+      REDIS_URL: "redis://redis:6379/0"
+      RABBIT_URL: "amqp://uniscoot:uniscoot@rabbitmq:5672/"
+      RABBIT_PUBLISH_TIMEOUT: "5s"
+      SMTP_HOST: "mailhog"
+      SMTP_PORT: "1025"
+      SMTP_FROM: "noreply@uniscoot.local"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
     networks: [uniscoot]
 
 volumes:

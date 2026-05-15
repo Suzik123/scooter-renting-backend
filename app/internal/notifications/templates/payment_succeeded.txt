@@ -1,0 +1,8 @@
+Payment received
+
+Hi {{.UserName}},
+
+We successfully charged {{.Amount}} {{.Currency}} for your recent UniScoot ride.
+Payment id: {{.PaymentID}}
+
+Thanks for riding with UniScoot.

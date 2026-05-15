@@ -1,0 +1,11 @@
+Offline payment recorded
+
+Hi {{.UserName}},
+
+A UniScoot operator has recorded an offline payment of {{.Amount}} {{.Currency}} for your ride.
+
+Rental id: {{.RentalID}}
+Payment id: {{.PaymentID}}
+{{if .Note}}Note: {{.Note}}{{end}}
+
+Your account is now in good standing.

@@ -14,7 +14,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (first_name, last_name, email, phone_number, password_hash, oauth_provider, oauth_subject, role, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, 'active'))
-RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at
+RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at, last_logout_at
 `
 
 type CreateUserParams struct {
@@ -56,12 +56,13 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.OauthSubject,
 		&i.StripeCustomerID,
 		&i.UpdatedAt,
+		&i.LastLogoutAt,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at
+SELECT user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at, last_logout_at
 FROM users
 WHERE LOWER(email) = LOWER($1) AND status <> 'deleted'
 `
@@ -83,12 +84,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, lower string) (User, error
 		&i.OauthSubject,
 		&i.StripeCustomerID,
 		&i.UpdatedAt,
+		&i.LastLogoutAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at
+SELECT user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at, last_logout_at
 FROM users
 WHERE user_id = $1 AND status <> 'deleted'
 `
@@ -110,12 +112,13 @@ func (q *Queries) GetUserByID(ctx context.Context, userID uuid.UUID) (User, erro
 		&i.OauthSubject,
 		&i.StripeCustomerID,
 		&i.UpdatedAt,
+		&i.LastLogoutAt,
 	)
 	return i, err
 }
 
 const getUserByOAuth = `-- name: GetUserByOAuth :one
-SELECT user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at
+SELECT user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at, last_logout_at
 FROM users
 WHERE oauth_provider = $1 AND oauth_subject = $2 AND status <> 'deleted'
 `
@@ -142,6 +145,7 @@ func (q *Queries) GetUserByOAuth(ctx context.Context, arg GetUserByOAuthParams) 
 		&i.OauthSubject,
 		&i.StripeCustomerID,
 		&i.UpdatedAt,
+		&i.LastLogoutAt,
 	)
 	return i, err
 }
@@ -152,7 +156,7 @@ SET oauth_provider = $1,
     oauth_subject  = $2,
     updated_at     = NOW()
 WHERE user_id = $3 AND status <> 'deleted'
-RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at
+RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at, last_logout_at
 `
 
 type LinkUserOAuthParams struct {
@@ -178,6 +182,7 @@ func (q *Queries) LinkUserOAuth(ctx context.Context, arg LinkUserOAuthParams) (U
 		&i.OauthSubject,
 		&i.StripeCustomerID,
 		&i.UpdatedAt,
+		&i.LastLogoutAt,
 	)
 	return i, err
 }
@@ -187,7 +192,7 @@ UPDATE users
 SET stripe_customer_id = $1,
     updated_at = NOW()
 WHERE user_id = $2 AND status <> 'deleted'
-RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at
+RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at, last_logout_at
 `
 
 type SetStripeCustomerIDParams struct {
@@ -212,6 +217,7 @@ func (q *Queries) SetStripeCustomerID(ctx context.Context, arg SetStripeCustomer
 		&i.OauthSubject,
 		&i.StripeCustomerID,
 		&i.UpdatedAt,
+		&i.LastLogoutAt,
 	)
 	return i, err
 }
@@ -258,7 +264,7 @@ SET first_name   = COALESCE($1, first_name),
     phone_number = COALESCE($3, phone_number),
     updated_at   = NOW()
 WHERE user_id = $4 AND status <> 'deleted'
-RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at
+RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at, last_logout_at
 `
 
 type UpdateUserParams struct {
@@ -290,6 +296,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.OauthSubject,
 		&i.StripeCustomerID,
 		&i.UpdatedAt,
+		&i.LastLogoutAt,
 	)
 	return i, err
 }

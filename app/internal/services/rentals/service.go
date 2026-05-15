@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/uniscoot/scooter-renting-backend/app/internal/apperrors"
+	"github.com/uniscoot/scooter-renting-backend/app/internal/events"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/models"
 )
 
@@ -60,12 +62,16 @@ type Service struct {
 	pricemodels PriceModelRepo
 	users       UsersRepo
 	payments    PaymentsService
+	pub         events.Publisher
 	log         *zap.Logger
 }
 
-func New(pool *pgxpool.Pool, rentals RentalsRepo, scooters ScootersRepo, pricemodels PriceModelRepo, users UsersRepo, payments PaymentsService, log *zap.Logger) *Service {
+func New(pool *pgxpool.Pool, rentals RentalsRepo, scooters ScootersRepo, pricemodels PriceModelRepo, users UsersRepo, payments PaymentsService, pub events.Publisher, log *zap.Logger) *Service {
 	if log == nil {
 		log = zap.NewNop()
+	}
+	if pub == nil {
+		pub = events.NopPublisher{}
 	}
 	return &Service{
 		pool:        pool,
@@ -74,6 +80,7 @@ func New(pool *pgxpool.Pool, rentals RentalsRepo, scooters ScootersRepo, pricemo
 		pricemodels: pricemodels,
 		users:       users,
 		payments:    payments,
+		pub:         pub,
 		log:         log,
 	}
 }
@@ -135,6 +142,8 @@ func (s *Service) Start(ctx context.Context, userID, scooterID, priceModelID uui
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 	committed = true
+
+	s.emitRentalStarted(ctx, rental)
 	return rental, nil
 }
 
@@ -191,6 +200,10 @@ func (s *Service) End(ctx context.Context, rentalID, actorUserID uuid.UUID, endL
 	committed = true
 
 	user, err := s.users.GetByID(ctx, actorUserID)
+	// Publish RentalCompleted regardless of whether the user lookup
+	// succeeded — the event is best-effort but the rental is the
+	// source of truth.
+	s.emitRentalCompleted(ctx, updated, user)
 	if err != nil {
 		s.log.Error("rentals.End: load user for charge", zap.String("user_id", actorUserID.String()), zap.Error(err))
 		reason := "user_lookup_failed"
@@ -265,4 +278,60 @@ func (s *Service) ListByUser(ctx context.Context, userID uuid.UUID, page models.
 
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (*models.Rental, error) {
 	return s.rentals.Get(ctx, id)
+}
+
+// emitRentalStarted publishes a RentalStarted event. Errors are logged but
+// never propagated.
+func (s *Service) emitRentalStarted(ctx context.Context, r *models.Rental) {
+	if r == nil {
+		return
+	}
+	payload := events.RentalStarted{
+		RentalID:  r.ID,
+		UserID:    r.UserID,
+		ScooterID: r.ScooterID,
+		StartedAt: r.StartTime,
+	}
+	env, err := events.NewEnvelope(events.TypeRentalStarted, payload)
+	if err != nil {
+		s.log.Warn("rentals.events: build envelope", zap.Error(err))
+		return
+	}
+	if err := s.pub.Publish(ctx, env); err != nil {
+		s.log.Warn("rentals.events: publish RentalStarted", zap.Error(err))
+	}
+}
+
+// emitRentalCompleted publishes a RentalCompleted event. user may be nil if
+// the lookup failed; the email/name fields fall back to empty strings.
+func (s *Service) emitRentalCompleted(ctx context.Context, r *models.Rental, user *models.User) {
+	if r == nil || r.EndTime == nil {
+		return
+	}
+	email, name := "", ""
+	if user != nil {
+		email = user.Email
+		name = strings.TrimSpace(user.FirstName + " " + user.LastName)
+	}
+	payload := events.RentalCompleted{
+		RentalID:  r.ID,
+		UserID:    r.UserID,
+		ScooterID: r.ScooterID,
+		StartedAt: r.StartTime,
+		EndedAt:   *r.EndTime,
+		DurationS: int64(r.EndTime.Sub(r.StartTime).Seconds()),
+		DistanceM: r.DistanceM,
+		TotalCost: r.TotalCost,
+		Currency:  "",
+		UserEmail: email,
+		UserName:  name,
+	}
+	env, err := events.NewEnvelope(events.TypeRentalCompleted, payload)
+	if err != nil {
+		s.log.Warn("rentals.events: build envelope", zap.Error(err))
+		return
+	}
+	if err := s.pub.Publish(ctx, env); err != nil {
+		s.log.Warn("rentals.events: publish RentalCompleted", zap.Error(err))
+	}
 }

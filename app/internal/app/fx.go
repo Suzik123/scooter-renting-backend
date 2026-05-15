@@ -2,19 +2,15 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 	"go.uber.org/zap"
 
-	googleclient "github.com/uniscoot/scooter-renting-backend/app/clients/google"
-	stripeclient "github.com/uniscoot/scooter-renting-backend/app/clients/stripe"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/config"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/server/middleware"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/server/public"
@@ -27,15 +23,6 @@ import (
 	scootersvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/scooters"
 	usersvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/users"
 	zonesvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/zones"
-	storagepg "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres"
-	maintrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/maintenance"
-	paymentsrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/payments"
-	pmrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/pricemodels"
-	rentalsrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/rentals"
-	scootersrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/scooters"
-	usersrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/users"
-	zonesrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/zones"
-	"github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/sqlc"
 	"github.com/uniscoot/scooter-renting-backend/app/pkg/logger"
 )
 
@@ -44,13 +31,18 @@ type authAdapter struct {
 	svc *authsvc.Service
 }
 
-// Parse satisfies middleware.AuthParser.
-func (a authAdapter) Parse(token string) (uuid.UUID, string, error) {
-	c, err := a.svc.ParseJWT(token)
+// Parse satisfies middleware.AuthParser. Surfaces (userID, role, jti).
+func (a authAdapter) Parse(token string) (uuid.UUID, string, string, error) {
+	c, err := a.svc.ParseFull(token)
 	if err != nil {
-		return uuid.Nil, "", err
+		return uuid.Nil, "", "", err
 	}
-	return c.UserID, c.Role, nil
+	return c.UserID, c.Role, c.JTI(), nil
+}
+
+// IsRevoked satisfies middleware.AuthParser.
+func (a authAdapter) IsRevoked(ctx context.Context, jti string) (bool, error) {
+	return a.svc.IsRevoked(ctx, jti)
 }
 
 // RunApi boots the API with Uber fx and blocks until an interrupt is received.
@@ -65,59 +57,13 @@ func RunApi(version string) {
 			return fxevent.NopLogger
 		}),
 
-		fx.Provide(func() (*config.Config, error) {
-			cfg, err := config.New()
-			if err != nil {
-				return nil, err
-			}
-			cfg.Version = version
-			return cfg, nil
-		}),
+		configModule(version),
 
-		fx.Provide(
-			storagepg.NewPostgres,
-		),
+		StorageModule,
+		CacheModule,
+		MessagingModule,
 
-		fx.Provide(
-			func(q *sqlc.Queries, p *pgxpool.Pool) *usersrepo.Repository { return usersrepo.New(q, p) },
-			func(q *sqlc.Queries, p *pgxpool.Pool) *zonesrepo.Repository { return zonesrepo.New(q, p) },
-			func(q *sqlc.Queries, p *pgxpool.Pool) *pmrepo.Repository { return pmrepo.New(q, p) },
-			func(q *sqlc.Queries, p *pgxpool.Pool) *scootersrepo.Repository { return scootersrepo.New(q, p) },
-			func(q *sqlc.Queries, p *pgxpool.Pool) *rentalsrepo.Repository { return rentalsrepo.New(q, p) },
-			func(q *sqlc.Queries, p *pgxpool.Pool) *maintrepo.Repository { return maintrepo.New(q, p) },
-			func(q *sqlc.Queries, p *pgxpool.Pool) *paymentsrepo.Repository { return paymentsrepo.New(q, p) },
-		),
-
-		fx.Provide(
-			func(cfg *config.Config) *stripeclient.Client {
-				return stripeclient.New(cfg.Stripe.SecretKey, cfg.Stripe.WebhookSecret)
-			},
-			func(cfg *config.Config) (*googleclient.Client, error) {
-				gc, err := googleclient.New(context.Background(), cfg.Google.ClientID)
-				if err != nil {
-					return nil, fmt.Errorf("init google client: %w", err)
-				}
-				return gc, nil
-			},
-		),
-
-		fx.Provide(
-			func(cfg *config.Config, ur *usersrepo.Repository) *authsvc.Service { return authsvc.New(cfg, ur) },
-			func(ur *usersrepo.Repository) *usersvc.Service { return usersvc.New(ur) },
-			func(zr *zonesrepo.Repository) *zonesvc.Service { return zonesvc.New(zr) },
-			func(pr *pmrepo.Repository) *pmsvc.Service { return pmsvc.New(pr) },
-			func(sr *scootersrepo.Repository) *scootersvc.Service { return scootersvc.New(sr) },
-			func(mr *maintrepo.Repository) *maintsvc.Service { return maintsvc.New(mr) },
-			func(sc *stripeclient.Client, pr *paymentsrepo.Repository, ur *usersrepo.Repository, pool *pgxpool.Pool, cfg *config.Config, log *zap.Logger) *paymentsvc.Service {
-				return paymentsvc.New(sc, pr, ur, pool, cfg, log)
-			},
-			func(pool *pgxpool.Pool, rr *rentalsrepo.Repository, sr *scootersrepo.Repository, pmR *pmrepo.Repository, ur *usersrepo.Repository, ps *paymentsvc.Service, log *zap.Logger) *rentalsvc.Service {
-				return rentalsvc.New(pool, rr, sr, pmR, ur, ps, log)
-			},
-			func(ur *usersrepo.Repository, as *authsvc.Service, gc *googleclient.Client, cfg *config.Config) *oauthsvc.Service {
-				return oauthsvc.New(ur, as, gc, cfg)
-			},
-		),
+		servicesModule(),
 
 		fx.Provide(
 			func(authS *authsvc.Service, cfg *config.Config, log *zap.Logger) *middleware.Middleware {

@@ -21,17 +21,29 @@ type UserRepo interface {
 }
 
 type Service struct {
-	users UserRepo
-	cfg   *config.Config
-	clock func() time.Time
+	users     UserRepo
+	cfg       *config.Config
+	clock     func() time.Time
+	blacklist Blacklist
 }
 
 func New(cfg *config.Config, users UserRepo) *Service {
 	return &Service{
-		users: users,
-		cfg:   cfg,
-		clock: time.Now,
+		users:     users,
+		cfg:       cfg,
+		clock:     time.Now,
+		blacklist: nopBlacklist{},
 	}
+}
+
+// SetBlacklist injects a JTI blacklist after construction. Used by the fx
+// wiring so the auth service stays usable in tests without a Redis dep.
+func (s *Service) SetBlacklist(b Blacklist) {
+	if b == nil {
+		s.blacklist = nopBlacklist{}
+		return
+	}
+	s.blacklist = b
 }
 
 // Register creates a new user with role "user" and returns the user with a freshly issued JWT.
@@ -105,6 +117,36 @@ func (s *Service) Parse(token string) (uuid.UUID, string, error) {
 		return uuid.Nil, "", err
 	}
 	return claims.UserID, claims.Role, nil
+}
+
+// ParseFull returns full claims for downstream blacklist checks.
+func (s *Service) ParseFull(token string) (*Claims, error) {
+	return s.ParseJWT(token)
+}
+
+// Logout parses the token, computes its residual TTL, and adds the jti to
+// the blacklist so subsequent requests bearing the same token are rejected.
+// Returns Unauthorized for tokens that fail validation.
+func (s *Service) Logout(ctx context.Context, token string) error {
+	claims, err := s.ParseJWT(token)
+	if err != nil {
+		return err
+	}
+	jti := claims.JTI()
+	exp := claims.Expiry()
+	if jti == "" || exp.IsZero() {
+		return apperrors.Unauthorized("invalid token")
+	}
+	ttl := time.Until(exp)
+	if ttl <= 0 {
+		return nil
+	}
+	return s.blacklist.Revoke(ctx, jti, ttl)
+}
+
+// IsRevoked reports whether the given jti is currently blacklisted.
+func (s *Service) IsRevoked(ctx context.Context, jti string) (bool, error) {
+	return s.blacklist.IsRevoked(ctx, jti)
 }
 
 // Clock overrides the time source (for tests).

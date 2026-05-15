@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -14,6 +15,7 @@ import (
 	stripeclient "github.com/uniscoot/scooter-renting-backend/app/clients/stripe"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/apperrors"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/config"
+	"github.com/uniscoot/scooter-renting-backend/app/internal/events"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/models"
 	rentalsvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/rentals"
 	paymentsrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/payments"
@@ -45,6 +47,7 @@ type StripeClient interface {
 // PaymentsRepo is the subset of the payments repository used here.
 type PaymentsRepo interface {
 	Create(ctx context.Context, in paymentsrepo.CreateInput) (*models.Payment, error)
+	CreateOffline(ctx context.Context, in paymentsrepo.CreateOfflineInput) (*models.Payment, bool, error)
 	GetByID(ctx context.Context, id uuid.UUID) (*models.Payment, error)
 	GetByProviderID(ctx context.Context, providerID string) (*models.Payment, error)
 	AttachIntent(ctx context.Context, in paymentsrepo.AttachIntentInput) (*models.Payment, error)
@@ -52,8 +55,10 @@ type PaymentsRepo interface {
 	MarkSucceeded(ctx context.Context, providerID string) (*models.Payment, error)
 	MarkFailed(ctx context.Context, providerID, reason string) (*models.Payment, error)
 	ListByUser(ctx context.Context, userID uuid.UUID, page models.Page) ([]models.Payment, int, error)
+	ListByUserSince(ctx context.Context, userID uuid.UUID, since time.Time, page models.Page) ([]models.Payment, int, error)
 	HasUnpaidRentals(ctx context.Context, userID uuid.UUID) (bool, error)
 	InsertWebhookEvent(ctx context.Context, eventID, eventType string, payload []byte) (bool, error)
+	GetByIdempotencyKey(ctx context.Context, key string) (*models.Payment, error)
 }
 
 // UsersRepo is the subset of the users repository used here.
@@ -62,19 +67,30 @@ type UsersRepo interface {
 	SetStripeCustomerID(ctx context.Context, id uuid.UUID, customerID string) (*models.User, error)
 }
 
+// RentalsRepo is the subset of the rentals repository the offline-payment
+// flow uses to validate a rental before recording payment for it.
+type RentalsRepo interface {
+	Get(ctx context.Context, id uuid.UUID) (*models.Rental, error)
+}
+
 // Service orchestrates Stripe-backed payments.
 type Service struct {
 	stripe   StripeClient
 	payments PaymentsRepo
 	users    UsersRepo
+	rentals  RentalsRepo
 	pool     *pgxpool.Pool
 	cfg      *config.Config
+	pub      events.Publisher
 	log      *zap.Logger
 }
 
-func New(stripe StripeClient, payments PaymentsRepo, users UsersRepo, pool *pgxpool.Pool, cfg *config.Config, log *zap.Logger) *Service {
+func New(stripe StripeClient, payments PaymentsRepo, users UsersRepo, pool *pgxpool.Pool, cfg *config.Config, pub events.Publisher, log *zap.Logger) *Service {
 	if log == nil {
 		log = zap.NewNop()
+	}
+	if pub == nil {
+		pub = events.NopPublisher{}
 	}
 	return &Service{
 		stripe:   stripe,
@@ -82,8 +98,15 @@ func New(stripe StripeClient, payments PaymentsRepo, users UsersRepo, pool *pgxp
 		users:    users,
 		pool:     pool,
 		cfg:      cfg,
+		pub:      pub,
 		log:      log,
 	}
+}
+
+// SetRentalsRepo wires a rentals repository after construction. Used by the
+// admin offline-payment flow without bloating the New() signature.
+func (s *Service) SetRentalsRepo(r RentalsRepo) {
+	s.rentals = r
 }
 
 // EnsureCustomer returns the user's stripe_customer_id, creating one via
@@ -220,6 +243,7 @@ func (s *Service) ChargeRental(ctx context.Context, rental *models.Rental, user 
 		if err != nil {
 			return nil, err
 		}
+		s.emitPaymentSucceeded(ctx, row, user)
 		return &rentalsvc.PaymentResult{
 			ID:     row.ID,
 			Status: models.PaymentSucceeded,
@@ -324,6 +348,19 @@ func (s *Service) ChargeRental(ctx context.Context, rental *models.Rental, user 
 		return nil, err
 	}
 
+	// Emit a terminal event when the intent already resolved synchronously.
+	// pending/processing rows wait for the webhook.
+	switch domainStatus {
+	case models.PaymentSucceeded:
+		s.emitPaymentSucceeded(ctx, updated, user)
+	case models.PaymentFailed:
+		reason := ""
+		if failurePtr != nil {
+			reason = *failurePtr
+		}
+		s.emitPaymentFailed(ctx, updated, user, reason)
+	}
+
 	out := &rentalsvc.PaymentResult{
 		ID:     updated.ID,
 		Status: domainStatus,
@@ -347,6 +384,12 @@ func (s *Service) failPaymentRow(ctx context.Context, paymentID uuid.UUID, reaso
 	if err != nil {
 		return nil, err
 	}
+	// Best-effort user lookup for the notification payload.
+	var u *models.User
+	if uu, lookupErr := s.users.GetByID(ctx, row.UserID); lookupErr == nil {
+		u = uu
+	}
+	s.emitPaymentFailed(ctx, row, u, reason)
 	r := reason
 	return &rentalsvc.PaymentResult{
 		ID:            row.ID,
@@ -381,7 +424,8 @@ func (s *Service) HandleWebhookEvent(ctx context.Context, payload []byte, sigHea
 		if intentID == "" {
 			return nil
 		}
-		if _, err := s.payments.MarkSucceeded(ctx, intentID); err != nil {
+		row, err := s.payments.MarkSucceeded(ctx, intentID)
+		if err != nil {
 			if errors.Is(err, apperrors.ErrNotFound) || apperrors.Is(err, apperrors.KindNotFound) {
 				// Either the row doesn't exist yet (race with API path
 				// that hasn't called AttachIntent) or it's already
@@ -394,12 +438,18 @@ func (s *Service) HandleWebhookEvent(ctx context.Context, payload []byte, sigHea
 			}
 			return err
 		}
+		var u *models.User
+		if uu, lookupErr := s.users.GetByID(ctx, row.UserID); lookupErr == nil {
+			u = uu
+		}
+		s.emitPaymentSucceeded(ctx, row, u)
 	case "payment_intent.payment_failed":
 		intentID, reason := extractIntentID(event.Data)
 		if intentID == "" {
 			return nil
 		}
-		if _, err := s.payments.MarkFailed(ctx, intentID, reason); err != nil {
+		row, err := s.payments.MarkFailed(ctx, intentID, reason)
+		if err != nil {
 			if errors.Is(err, apperrors.ErrNotFound) || apperrors.Is(err, apperrors.KindNotFound) {
 				s.log.Warn("payments.webhook: failed no-op",
 					zap.String("intent_id", intentID),
@@ -409,6 +459,11 @@ func (s *Service) HandleWebhookEvent(ctx context.Context, payload []byte, sigHea
 			}
 			return err
 		}
+		var u *models.User
+		if uu, lookupErr := s.users.GetByID(ctx, row.UserID); lookupErr == nil {
+			u = uu
+		}
+		s.emitPaymentFailed(ctx, row, u, reason)
 	default:
 		s.log.Info("payments.webhook: ignored event", zap.String("type", event.Type), zap.String("event_id", event.ID))
 	}
@@ -418,6 +473,178 @@ func (s *Service) HandleWebhookEvent(ctx context.Context, payload []byte, sigHea
 // ListPaymentsByUser returns the user's payments, paginated.
 func (s *Service) ListPaymentsByUser(ctx context.Context, userID uuid.UUID, page models.Page) ([]models.Payment, int, error) {
 	return s.payments.ListByUser(ctx, userID, page)
+}
+
+// ListPaymentsByUserSince returns the user's payments newer than since
+// (inclusive on transaction_date), paginated.
+func (s *Service) ListPaymentsByUserSince(ctx context.Context, userID uuid.UUID, since time.Time, page models.Page) ([]models.Payment, int, error) {
+	return s.payments.ListByUserSince(ctx, userID, since, page)
+}
+
+// OfflineApprovalInput is the input to ApproveOffline.
+type OfflineApprovalInput struct {
+	RentalID       uuid.UUID
+	ApproverID     uuid.UUID
+	Amount         decimal.Decimal
+	Currency       string
+	Note           string
+	IdempotencyKey string
+}
+
+// ApproveOffline records a manual offline payment for a completed rental.
+// Idempotent on (idempotency_key): a repeat call with the same key returns
+// the existing row instead of inserting a duplicate.
+//
+// Validation order:
+//   1. Idempotency replay short-circuits (return existing row).
+//   2. Rental must exist, be 'completed'.
+//   3. Insert payment row with payment_method='offline', status='succeeded'.
+//   4. Publish OfflinePaymentApproved (best-effort).
+func (s *Service) ApproveOffline(ctx context.Context, in OfflineApprovalInput) (*models.Payment, error) {
+	if s.rentals == nil {
+		return nil, apperrors.Internal("offline payments not wired")
+	}
+	if in.Amount.Sign() <= 0 {
+		return nil, apperrors.Invalid("amount must be positive")
+	}
+	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
+	if currency == "" {
+		currency = strings.ToUpper(s.cfg.Stripe.Currency)
+	}
+	if currency == "" {
+		currency = "USD"
+	}
+
+	// 1. Idempotency replay.
+	if in.IdempotencyKey != "" {
+		existing, err := s.payments.GetByIdempotencyKey(ctx, in.IdempotencyKey)
+		if err == nil && existing != nil {
+			return existing, nil
+		}
+		if err != nil && !apperrors.Is(err, apperrors.KindNotFound) {
+			return nil, err
+		}
+	}
+
+	// 2. Rental exists + completed + ownership.
+	rental, err := s.rentals.Get(ctx, in.RentalID)
+	if err != nil {
+		return nil, err
+	}
+	if rental.Status != models.RentalCompleted {
+		return nil, apperrors.Conflict("rental not completed")
+	}
+
+	// 3. Insert payment row.
+	row, replay, err := s.payments.CreateOffline(ctx, paymentsrepo.CreateOfflineInput{
+		UserID:         rental.UserID,
+		RentalID:       rental.ID,
+		Amount:         in.Amount,
+		Currency:       currency,
+		ApproverID:     in.ApproverID,
+		IdempotencyKey: in.IdempotencyKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if replay {
+		// Race with another concurrent submission — the existing row wins.
+		return row, nil
+	}
+
+	// 4. Publish event (best-effort, errors are logged).
+	var u *models.User
+	if uu, lookupErr := s.users.GetByID(ctx, rental.UserID); lookupErr == nil {
+		u = uu
+	}
+	s.emitOfflineApproved(ctx, row, u, in.ApproverID, in.Note)
+	return row, nil
+}
+
+// emitPaymentSucceeded publishes a PaymentSucceeded event. Errors are logged
+// but never propagated — the payment write is the source of truth.
+func (s *Service) emitPaymentSucceeded(ctx context.Context, row *models.Payment, user *models.User) {
+	if row == nil {
+		return
+	}
+	payload := events.PaymentSucceeded{
+		PaymentID:  row.ID,
+		UserID:     row.UserID,
+		RentalID:   row.RentalID,
+		Amount:     row.Amount,
+		Currency:   row.Currency,
+		UserEmail:  emailOrEmpty(user),
+		UserName:   nameOrEmpty(user),
+		OccurredAt: time.Now().UTC(),
+	}
+	s.publish(ctx, events.TypePaymentSucceeded, payload)
+}
+
+// emitPaymentFailed publishes a PaymentFailed event.
+func (s *Service) emitPaymentFailed(ctx context.Context, row *models.Payment, user *models.User, reason string) {
+	if row == nil {
+		return
+	}
+	payload := events.PaymentFailed{
+		PaymentID:     row.ID,
+		UserID:        row.UserID,
+		RentalID:      row.RentalID,
+		Amount:        row.Amount,
+		Currency:      row.Currency,
+		FailureReason: reason,
+		UserEmail:     emailOrEmpty(user),
+		UserName:      nameOrEmpty(user),
+		OccurredAt:    time.Now().UTC(),
+	}
+	s.publish(ctx, events.TypePaymentFailed, payload)
+}
+
+// emitOfflineApproved publishes an OfflinePaymentApproved event.
+func (s *Service) emitOfflineApproved(ctx context.Context, row *models.Payment, user *models.User, approverID uuid.UUID, note string) {
+	if row == nil || row.RentalID == nil {
+		return
+	}
+	payload := events.OfflinePaymentApproved{
+		PaymentID:  row.ID,
+		UserID:     row.UserID,
+		RentalID:   *row.RentalID,
+		Amount:     row.Amount,
+		Currency:   row.Currency,
+		ApprovedBy: approverID,
+		Note:       note,
+		UserEmail:  emailOrEmpty(user),
+		UserName:   nameOrEmpty(user),
+		OccurredAt: time.Now().UTC(),
+	}
+	s.publish(ctx, events.TypeOfflinePaymentApproved, payload)
+}
+
+// publish builds an envelope and dispatches it. Logs but does not propagate
+// errors — events are best-effort.
+func (s *Service) publish(ctx context.Context, typ string, payload any) {
+	env, err := events.NewEnvelope(typ, payload)
+	if err != nil {
+		s.log.Warn("payments.events: build envelope", zap.String("type", typ), zap.Error(err))
+		return
+	}
+	if err := s.pub.Publish(ctx, env); err != nil {
+		s.log.Warn("payments.events: publish", zap.String("type", typ), zap.Error(err))
+	}
+}
+
+func emailOrEmpty(u *models.User) string {
+	if u == nil {
+		return ""
+	}
+	return u.Email
+}
+
+func nameOrEmpty(u *models.User) string {
+	if u == nil {
+		return ""
+	}
+	full := strings.TrimSpace(u.FirstName + " " + u.LastName)
+	return full
 }
 
 // mapIntentStatus translates a Stripe PaymentIntent status into a domain

@@ -18,6 +18,9 @@ type Config struct {
 	Bcrypt BcryptConfig
 	Stripe StripeConfig
 	Google GoogleConfig
+	Redis  RedisConfig
+	Rabbit RabbitConfig
+	SMTP   SMTPConfig
 }
 
 type DBConfig struct {
@@ -53,6 +56,23 @@ type StripeConfig struct {
 type GoogleConfig struct {
 	ClientID     string `env:"GOOGLE_CLIENT_ID,required"`
 	HostedDomain string `env:"GOOGLE_HOSTED_DOMAIN"`
+}
+
+type RedisConfig struct {
+	URL string `env:"REDIS_URL" envDefault:"redis://redis:6379/0"`
+}
+
+type RabbitConfig struct {
+	URL            string        `env:"RABBIT_URL" envDefault:"amqp://guest:guest@rabbitmq:5672/"`
+	PublishTimeout time.Duration `env:"RABBIT_PUBLISH_TIMEOUT" envDefault:"5s"`
+}
+
+type SMTPConfig struct {
+	Host     string `env:"SMTP_HOST" envDefault:"mailhog"`
+	Port     int    `env:"SMTP_PORT" envDefault:"1025"`
+	From     string `env:"SMTP_FROM" envDefault:"noreply@uniscoot.local"`
+	User     string `env:"SMTP_USER" envDefault:""`
+	Password string `env:"SMTP_PASSWORD" envDefault:""`
 }
 
 // New loads .env if present, then parses environment variables into Config.

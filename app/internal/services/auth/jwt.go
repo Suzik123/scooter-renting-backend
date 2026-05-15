@@ -18,6 +18,22 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// JTI returns the jti (token id) embedded in the claims.
+func (c *Claims) JTI() string {
+	if c == nil {
+		return ""
+	}
+	return c.ID
+}
+
+// Expiry returns the absolute expiry time embedded in the claims, or zero.
+func (c *Claims) Expiry() time.Time {
+	if c == nil || c.ExpiresAt == nil {
+		return time.Time{}
+	}
+	return c.ExpiresAt.Time
+}
+
 // IssueJWT signs an HS256 token for the given user using the configured secret, issuer and TTL.
 func (s *Service) IssueJWT(user *models.User) (string, error) {
 	now := s.now()

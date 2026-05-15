@@ -7,6 +7,7 @@ package sqlc
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -19,7 +20,7 @@ SET provider_payment_id = $1,
     failure_reason      = $3,
     updated_at          = NOW()
 WHERE payment_id = $4
-RETURNING payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at
+RETURNING payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at, offline_approved_by, offline_approved_at, idempotency_key
 `
 
 type AttachPaymentIntentParams struct {
@@ -49,6 +50,9 @@ func (q *Queries) AttachPaymentIntent(ctx context.Context, arg AttachPaymentInte
 		&i.FailureReason,
 		&i.TransactionDate,
 		&i.UpdatedAt,
+		&i.OfflineApprovedBy,
+		&i.OfflineApprovedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -64,6 +68,81 @@ func (q *Queries) CountPaymentsByUser(ctx context.Context, userID uuid.UUID) (in
 	return count, err
 }
 
+const countPaymentsByUserSince = `-- name: CountPaymentsByUserSince :one
+SELECT COUNT(*) FROM payments
+WHERE user_id = $1
+  AND transaction_date >= $2
+`
+
+type CountPaymentsByUserSinceParams struct {
+	UserID uuid.UUID `db:"user_id"`
+	Since  time.Time `db:"since"`
+}
+
+func (q *Queries) CountPaymentsByUserSince(ctx context.Context, arg CountPaymentsByUserSinceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPaymentsByUserSince, arg.UserID, arg.Since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createOfflinePayment = `-- name: CreateOfflinePayment :one
+INSERT INTO payments (
+    user_id, rental_id, amount, currency, payment_method, status,
+    offline_approved_by, offline_approved_at, idempotency_key
+) VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    'offline',
+    'succeeded',
+    $5,
+    NOW(),
+    $6
+)
+ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+RETURNING payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at, offline_approved_by, offline_approved_at, idempotency_key
+`
+
+type CreateOfflinePaymentParams struct {
+	UserID            uuid.UUID       `db:"user_id"`
+	RentalID          *uuid.UUID      `db:"rental_id"`
+	Amount            decimal.Decimal `db:"amount"`
+	Currency          string          `db:"currency"`
+	OfflineApprovedBy *uuid.UUID      `db:"offline_approved_by"`
+	IdempotencyKey    *string         `db:"idempotency_key"`
+}
+
+func (q *Queries) CreateOfflinePayment(ctx context.Context, arg CreateOfflinePaymentParams) (Payment, error) {
+	row := q.db.QueryRow(ctx, createOfflinePayment,
+		arg.UserID,
+		arg.RentalID,
+		arg.Amount,
+		arg.Currency,
+		arg.OfflineApprovedBy,
+		arg.IdempotencyKey,
+	)
+	var i Payment
+	err := row.Scan(
+		&i.PaymentID,
+		&i.UserID,
+		&i.RentalID,
+		&i.Amount,
+		&i.Currency,
+		&i.PaymentMethod,
+		&i.Status,
+		&i.ProviderPaymentID,
+		&i.FailureReason,
+		&i.TransactionDate,
+		&i.UpdatedAt,
+		&i.OfflineApprovedBy,
+		&i.OfflineApprovedAt,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
 const createPayment = `-- name: CreatePayment :one
 INSERT INTO payments (user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason)
 VALUES (
@@ -76,7 +155,7 @@ VALUES (
     $7,
     $8
 )
-RETURNING payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at
+RETURNING payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at, offline_approved_by, offline_approved_at, idempotency_key
 `
 
 type CreatePaymentParams struct {
@@ -114,12 +193,15 @@ func (q *Queries) CreatePayment(ctx context.Context, arg CreatePaymentParams) (P
 		&i.FailureReason,
 		&i.TransactionDate,
 		&i.UpdatedAt,
+		&i.OfflineApprovedBy,
+		&i.OfflineApprovedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
 
 const getPaymentByID = `-- name: GetPaymentByID :one
-SELECT payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at
+SELECT payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at, offline_approved_by, offline_approved_at, idempotency_key
 FROM payments
 WHERE payment_id = $1
 `
@@ -139,12 +221,43 @@ func (q *Queries) GetPaymentByID(ctx context.Context, paymentID uuid.UUID) (Paym
 		&i.FailureReason,
 		&i.TransactionDate,
 		&i.UpdatedAt,
+		&i.OfflineApprovedBy,
+		&i.OfflineApprovedAt,
+		&i.IdempotencyKey,
+	)
+	return i, err
+}
+
+const getPaymentByIdempotencyKey = `-- name: GetPaymentByIdempotencyKey :one
+SELECT payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at, offline_approved_by, offline_approved_at, idempotency_key
+FROM payments
+WHERE idempotency_key = $1
+`
+
+func (q *Queries) GetPaymentByIdempotencyKey(ctx context.Context, idempotencyKey *string) (Payment, error) {
+	row := q.db.QueryRow(ctx, getPaymentByIdempotencyKey, idempotencyKey)
+	var i Payment
+	err := row.Scan(
+		&i.PaymentID,
+		&i.UserID,
+		&i.RentalID,
+		&i.Amount,
+		&i.Currency,
+		&i.PaymentMethod,
+		&i.Status,
+		&i.ProviderPaymentID,
+		&i.FailureReason,
+		&i.TransactionDate,
+		&i.UpdatedAt,
+		&i.OfflineApprovedBy,
+		&i.OfflineApprovedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
 
 const getPaymentByProviderID = `-- name: GetPaymentByProviderID :one
-SELECT payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at
+SELECT payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at, offline_approved_by, offline_approved_at, idempotency_key
 FROM payments
 WHERE provider_payment_id = $1
 `
@@ -164,6 +277,9 @@ func (q *Queries) GetPaymentByProviderID(ctx context.Context, providerPaymentID 
 		&i.FailureReason,
 		&i.TransactionDate,
 		&i.UpdatedAt,
+		&i.OfflineApprovedBy,
+		&i.OfflineApprovedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -195,7 +311,7 @@ func (q *Queries) HasUnpaidRentals(ctx context.Context, userID uuid.UUID) (bool,
 }
 
 const listPaymentsByUser = `-- name: ListPaymentsByUser :many
-SELECT payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at
+SELECT payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at, offline_approved_by, offline_approved_at, idempotency_key
 FROM payments
 WHERE user_id = $1
 ORDER BY transaction_date DESC
@@ -229,6 +345,65 @@ func (q *Queries) ListPaymentsByUser(ctx context.Context, arg ListPaymentsByUser
 			&i.FailureReason,
 			&i.TransactionDate,
 			&i.UpdatedAt,
+			&i.OfflineApprovedBy,
+			&i.OfflineApprovedAt,
+			&i.IdempotencyKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPaymentsByUserSince = `-- name: ListPaymentsByUserSince :many
+SELECT payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at, offline_approved_by, offline_approved_at, idempotency_key
+FROM payments
+WHERE user_id = $1
+  AND transaction_date >= $2
+ORDER BY transaction_date DESC
+LIMIT $4 OFFSET $3
+`
+
+type ListPaymentsByUserSinceParams struct {
+	UserID uuid.UUID `db:"user_id"`
+	Since  time.Time `db:"since"`
+	Offset int32     `db:"offset"`
+	Limit  int32     `db:"limit"`
+}
+
+func (q *Queries) ListPaymentsByUserSince(ctx context.Context, arg ListPaymentsByUserSinceParams) ([]Payment, error) {
+	rows, err := q.db.Query(ctx, listPaymentsByUserSince,
+		arg.UserID,
+		arg.Since,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Payment{}
+	for rows.Next() {
+		var i Payment
+		if err := rows.Scan(
+			&i.PaymentID,
+			&i.UserID,
+			&i.RentalID,
+			&i.Amount,
+			&i.Currency,
+			&i.PaymentMethod,
+			&i.Status,
+			&i.ProviderPaymentID,
+			&i.FailureReason,
+			&i.TransactionDate,
+			&i.UpdatedAt,
+			&i.OfflineApprovedBy,
+			&i.OfflineApprovedAt,
+			&i.IdempotencyKey,
 		); err != nil {
 			return nil, err
 		}
@@ -246,7 +421,7 @@ SET status         = 'failed',
     failure_reason = $1,
     updated_at     = NOW()
 WHERE payment_id = $2
-RETURNING payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at
+RETURNING payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at, offline_approved_by, offline_approved_at, idempotency_key
 `
 
 type MarkPaymentByIDFailedParams struct {
@@ -269,6 +444,9 @@ func (q *Queries) MarkPaymentByIDFailed(ctx context.Context, arg MarkPaymentByID
 		&i.FailureReason,
 		&i.TransactionDate,
 		&i.UpdatedAt,
+		&i.OfflineApprovedBy,
+		&i.OfflineApprovedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -280,7 +458,7 @@ SET status         = 'failed',
     updated_at     = NOW()
 WHERE provider_payment_id = $2
   AND status = 'pending'
-RETURNING payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at
+RETURNING payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at, offline_approved_by, offline_approved_at, idempotency_key
 `
 
 type MarkPaymentFailedParams struct {
@@ -303,6 +481,9 @@ func (q *Queries) MarkPaymentFailed(ctx context.Context, arg MarkPaymentFailedPa
 		&i.FailureReason,
 		&i.TransactionDate,
 		&i.UpdatedAt,
+		&i.OfflineApprovedBy,
+		&i.OfflineApprovedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }
@@ -313,7 +494,7 @@ SET status     = 'succeeded',
     updated_at = NOW()
 WHERE provider_payment_id = $1
   AND status = 'pending'
-RETURNING payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at
+RETURNING payment_id, user_id, rental_id, amount, currency, payment_method, status, provider_payment_id, failure_reason, transaction_date, updated_at, offline_approved_by, offline_approved_at, idempotency_key
 `
 
 func (q *Queries) MarkPaymentSucceeded(ctx context.Context, providerPaymentID *string) (Payment, error) {
@@ -331,6 +512,9 @@ func (q *Queries) MarkPaymentSucceeded(ctx context.Context, providerPaymentID *s
 		&i.FailureReason,
 		&i.TransactionDate,
 		&i.UpdatedAt,
+		&i.OfflineApprovedBy,
+		&i.OfflineApprovedAt,
+		&i.IdempotencyKey,
 	)
 	return i, err
 }

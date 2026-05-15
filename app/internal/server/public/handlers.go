@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ import (
 type AuthService interface {
 	Register(ctx context.Context, email, firstName, lastName, password, phoneNumber string) (*models.User, string, error)
 	Login(ctx context.Context, email, password string) (*models.User, string, error)
+	Logout(ctx context.Context, token string) error
 }
 
 // OAuthService is the subset of the oauth service used by HTTP handlers.
@@ -92,7 +94,9 @@ type PaymentsService interface {
 	ListPaymentMethods(ctx context.Context, userID uuid.UUID) ([]paymentsvc.PaymentMethodView, error)
 	DetachPaymentMethod(ctx context.Context, userID uuid.UUID, paymentMethodID string) error
 	ListPaymentsByUser(ctx context.Context, userID uuid.UUID, page models.Page) ([]models.Payment, int, error)
+	ListPaymentsByUserSince(ctx context.Context, userID uuid.UUID, since time.Time, page models.Page) ([]models.Payment, int, error)
 	HandleWebhookEvent(ctx context.Context, payload []byte, sigHeader string) error
+	ApproveOffline(ctx context.Context, in paymentsvc.OfflineApprovalInput) (*models.Payment, error)
 }
 
 // Handler is the fiber-based HTTP handler aggregate for all routes.
@@ -232,6 +236,20 @@ func (h *Handler) Login(c fiber.Ctx) error {
 		return WriteDomain(c, err)
 	}
 	return WriteJSON(c, fiber.StatusOK, authResp{Token: token, User: user})
+}
+
+// Logout revokes the caller's JWT by adding its jti to the blacklist for
+// the remainder of its TTL. Returns 204 even if the token is already
+// expired (no-op) so clients can always clear local state.
+func (h *Handler) Logout(c fiber.Ctx) error {
+	ident := IdentityFromCtx(c)
+	if ident == nil || ident.Token == "" {
+		return WriteError(c, resp.ErrUnauthorized(""))
+	}
+	if err := h.auth.Logout(c.Context(), ident.Token); err != nil {
+		return WriteDomain(c, err)
+	}
+	return WriteNoContent(c)
 }
 
 // OAuthGoogle verifies a Google id_token and returns a session token.
@@ -415,7 +433,9 @@ func (h *Handler) ListUserRentals(c fiber.Ctx) error {
 	return WriteJSON(c, fiber.StatusOK, listEnvelope{Items: items, Total: total})
 }
 
-// ListUserPayments returns the paginated list of a user's payments.
+// ListUserPayments returns the paginated list of a user's payments. When
+// ?since=<RFC3339> is set, only payments with transaction_date >= since are
+// returned — used by the FE polling loop to reconcile async webhook updates.
 func (h *Handler) ListUserPayments(c fiber.Ctx) error {
 	id, err := URLParamUUID(c, "id")
 	if err != nil {
@@ -424,11 +444,60 @@ func (h *Handler) ListUserPayments(c fiber.Ctx) error {
 	if apiErr := assertOwnerOrAdmin(c, id); apiErr != nil {
 		return WriteError(c, apiErr)
 	}
-	items, total, err := h.payments.ListPaymentsByUser(c.Context(), id, PageFromCtx(c))
+
+	page := PageFromCtx(c)
+	if rawSince := c.Query("since"); rawSince != "" {
+		since, perr := time.Parse(time.RFC3339, rawSince)
+		if perr != nil {
+			return WriteError(c, resp.ErrValidation("invalid since (want RFC3339)"))
+		}
+		items, total, lerr := h.payments.ListPaymentsByUserSince(c.Context(), id, since, page)
+		if lerr != nil {
+			return WriteDomain(c, lerr)
+		}
+		return WriteJSON(c, fiber.StatusOK, listEnvelope{Items: items, Total: total})
+	}
+
+	items, total, err := h.payments.ListPaymentsByUser(c.Context(), id, page)
 	if err != nil {
 		return WriteDomain(c, err)
 	}
 	return WriteJSON(c, fiber.StatusOK, listEnvelope{Items: items, Total: total})
+}
+
+// ---- admin: offline payments
+
+type offlinePaymentReq struct {
+	RentalID       uuid.UUID       `json:"rental_id" validate:"required"`
+	Amount         decimal.Decimal `json:"amount" validate:"required"`
+	Currency       string          `json:"currency" validate:"omitempty,len=3"`
+	Note           string          `json:"note" validate:"omitempty,max=500"`
+	IdempotencyKey string          `json:"idempotency_key" validate:"required,min=8,max=64"`
+}
+
+// ApproveOfflinePayment records a manual offline payment for a completed
+// rental. Admin-only. Idempotent on idempotency_key.
+func (h *Handler) ApproveOfflinePayment(c fiber.Ctx) error {
+	ident := IdentityFromCtx(c)
+	if ident == nil {
+		return WriteError(c, resp.ErrUnauthorized(""))
+	}
+	var body offlinePaymentReq
+	if err := DecodeBody(c, &body); err != nil {
+		return WriteDomain(c, err)
+	}
+	row, err := h.payments.ApproveOffline(c.Context(), paymentsvc.OfflineApprovalInput{
+		RentalID:       body.RentalID,
+		ApproverID:     ident.UserID,
+		Amount:         body.Amount,
+		Currency:       body.Currency,
+		Note:           body.Note,
+		IdempotencyKey: body.IdempotencyKey,
+	})
+	if err != nil {
+		return WriteDomain(c, err)
+	}
+	return WriteCreated(c, row)
 }
 
 // ---- payments

@@ -101,6 +101,7 @@ func RegisterRoutes(p Params) {
 
 	// Authenticated routes.
 	authed := api.Group("", mw.JWTAuth)
+	authed.Post("/auth/logout", h.Logout)
 
 	users := authed.Group("/users/:id")
 	users.Get("/", h.GetUser)
@@ -141,6 +142,7 @@ func RegisterRoutes(p Params) {
 
 	admin.Delete("/rentals/:id", h.CancelRental)
 	admin.Put("/maintenance/:id/close", h.CloseMaintenance)
+	admin.Post("/payments/offline", h.ApproveOfflinePayment)
 }
 
 // corsConfig builds a cors.Config from the application config.
