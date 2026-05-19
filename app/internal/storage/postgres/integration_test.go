@@ -122,6 +122,7 @@ func TestPaymentsRepo_CreateOfflineAndIdempotency(t *testing.T) {
 	scooter, err := q.CreateScooter(ctx, sqlc.CreateScooterParams{
 		QrCode:       "QR-1",
 		BatteryLevel: 100,
+		Status:       models.ScooterAvailable,
 		Model:        "M",
 	})
 	require.NoError(t, err)
