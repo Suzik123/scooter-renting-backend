@@ -20,6 +20,7 @@ const (
 	TypeOfflinePaymentApproved = "payment.offline_approved"
 	TypeRentalStarted          = "rental.started"
 	TypeRentalCompleted        = "rental.completed"
+	TypePasswordResetRequested = "password_reset.requested"
 )
 
 const (
@@ -130,4 +131,16 @@ type RentalCompleted struct {
 	Currency   string          `json:"currency"`
 	UserEmail  string          `json:"user_email"`
 	UserName   string          `json:"user_name"`
+}
+
+// PasswordResetRequested is published when a user asks for a password reset.
+// The worker uses ResetURL (built API-side from cfg.Frontend.BaseURL + the
+// raw token) to render the email body. The raw token never lands in the API
+// logs — it lives only in the published payload and on the consumer side.
+type PasswordResetRequested struct {
+	UserID    uuid.UUID `json:"user_id"`
+	UserEmail string    `json:"user_email"`
+	UserName  string    `json:"user_name"`
+	ResetURL  string    `json:"reset_url"`
+	ExpiresAt time.Time `json:"expires_at"`
 }

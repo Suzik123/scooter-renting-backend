@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/uniscoot/scooter-renting-backend/app/internal/models"
 	pmrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/payments"
@@ -37,7 +38,11 @@ func startPostgres(t *testing.T) (*pgxpool.Pool, *sqlc.Queries, func()) {
 		tcpostgres.WithDatabase("uniscoot"),
 		tcpostgres.WithUsername("uniscoot"),
 		tcpostgres.WithPassword("uniscoot"),
-		testcontainers.WithWaitStrategyAndDeadline(60*time.Second, nil),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).
+				WithStartupTimeout(60*time.Second),
+		),
 	)
 	require.NoError(t, err)
 

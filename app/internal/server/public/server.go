@@ -3,9 +3,11 @@ package public
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+	"github.com/gofiber/fiber/v3/middleware/limiter"
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -83,11 +85,16 @@ func RegisterRoutes(p Params) {
 
 	api := app.Group("/api")
 
-	// Auth (public)
+	// Auth (public). Per-route rate limiters: login and register share the
+	// same per-IP defaults (10/min) but use independent stores so a noisy
+	// login attempt does not exhaust a legitimate registration budget. The
+	// password-reset request route uses a tighter 5/min/IP.
 	auth := api.Group("/auth")
-	auth.Post("/register", h.Register)
-	auth.Post("/login", h.Login)
+	auth.Post("/register", h.Register, authRateLimiter(10))
+	auth.Post("/login", h.Login, authRateLimiter(10))
 	auth.Post("/oauth/google", h.OAuthGoogle)
+	auth.Post("/password-reset/request", h.RequestPasswordReset, authRateLimiter(5))
+	auth.Post("/password-reset/confirm", h.ConfirmPasswordReset, authRateLimiter(10))
 
 	// Scooters (public reads)
 	scooters := api.Group("/scooters")
@@ -143,6 +150,23 @@ func RegisterRoutes(p Params) {
 	admin.Delete("/rentals/:id", h.CancelRental)
 	admin.Put("/maintenance/:id/close", h.CloseMaintenance)
 	admin.Post("/payments/offline", h.ApproveOfflinePayment)
+}
+
+// authRateLimiter returns a per-route fiber limiter keyed by client IP. Each
+// call constructs its own limiter (and thus its own in-memory store) so
+// per-route quotas do not bleed into each other. On limit reached we emit a
+// standard error envelope with kind=rate_limited.
+func authRateLimiter(maxPerMin int) fiber.Handler {
+	return limiter.New(limiter.Config{
+		Max:        maxPerMin,
+		Expiration: time.Minute,
+		KeyGenerator: func(c fiber.Ctx) string {
+			return c.IP()
+		},
+		LimitReached: func(c fiber.Ctx) error {
+			return WriteError(c, resp.ErrTooManyRequests(""))
+		},
+	})
 }
 
 // corsConfig builds a cors.Config from the application config.

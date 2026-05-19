@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
@@ -24,6 +26,7 @@ import (
 	zonesvc "github.com/uniscoot/scooter-renting-backend/app/internal/services/zones"
 	storagepg "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres"
 	maintrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/maintenance"
+	passwordresetsrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/passwordresets"
 	paymentsrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/payments"
 	pmrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/pricemodels"
 	rentalsrepo "github.com/uniscoot/scooter-renting-backend/app/internal/storage/postgres/repo/rentals"
@@ -59,6 +62,9 @@ var StorageModule = fx.Options(
 		func(q *sqlc.Queries, p *pgxpool.Pool) *rentalsrepo.Repository { return rentalsrepo.New(q, p) },
 		func(q *sqlc.Queries, p *pgxpool.Pool) *maintrepo.Repository { return maintrepo.New(q, p) },
 		func(q *sqlc.Queries, p *pgxpool.Pool) *paymentsrepo.Repository { return paymentsrepo.New(q, p) },
+		func(q *sqlc.Queries, p *pgxpool.Pool) *passwordresetsrepo.Repository {
+			return passwordresetsrepo.New(q, p)
+		},
 	),
 )
 
@@ -90,6 +96,51 @@ var MailModule = fx.Options(
 	fx.Provide(notifications.NewSender),
 )
 
+// passwordResetTokenAdapter bridges the concrete passwordresets.Repository
+// to the narrow auth.PasswordResetTokenRepo interface. The auth package
+// owns the row shape it consumes so it does not depend on storage internals.
+type passwordResetTokenAdapter struct {
+	repo *passwordresetsrepo.Repository
+}
+
+func (a *passwordResetTokenAdapter) Create(ctx context.Context, userID uuid.UUID, hash []byte, expiresAt time.Time) (*authsvc.PasswordResetTokenRow, error) {
+	t, err := a.repo.Create(ctx, userID, hash, expiresAt)
+	if err != nil {
+		return nil, err
+	}
+	return toAuthRow(t), nil
+}
+
+func (a *passwordResetTokenAdapter) GetByHash(ctx context.Context, hash []byte) (*authsvc.PasswordResetTokenRow, error) {
+	t, err := a.repo.GetByHash(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+	return toAuthRow(t), nil
+}
+
+func (a *passwordResetTokenAdapter) InvalidateAllForUser(ctx context.Context, userID uuid.UUID) error {
+	return a.repo.InvalidateAllForUser(ctx, userID)
+}
+
+func (a *passwordResetTokenAdapter) MarkUsed(ctx context.Context, tokenID uuid.UUID) error {
+	return a.repo.MarkUsed(ctx, tokenID)
+}
+
+func toAuthRow(t *passwordresetsrepo.Token) *authsvc.PasswordResetTokenRow {
+	if t == nil {
+		return nil
+	}
+	return &authsvc.PasswordResetTokenRow{
+		TokenID:   t.TokenID,
+		UserID:    t.UserID,
+		TokenHash: t.TokenHash,
+		ExpiresAt: t.ExpiresAt,
+		UsedAt:    t.UsedAt,
+		CreatedAt: t.CreatedAt,
+	}
+}
+
 // servicesModule wires every domain service. The auth service is wired with
 // the blacklist after construction so its zero-dep test usage stays simple.
 func servicesModule() fx.Option {
@@ -107,9 +158,17 @@ func servicesModule() fx.Option {
 			},
 		),
 		fx.Provide(
-			func(cfg *config.Config, ur *usersrepo.Repository, bl *cache.JTIBlacklist) *authsvc.Service {
+			func(cfg *config.Config, ur *usersrepo.Repository, bl *cache.JTIBlacklist, prr *passwordresetsrepo.Repository, pub events.Publisher, log *zap.Logger) *authsvc.Service {
 				s := authsvc.New(cfg, ur)
 				s.SetBlacklist(bl)
+				s.SetPasswordResetDeps(
+					&passwordResetTokenAdapter{repo: prr},
+					ur,
+					pub,
+					log,
+					cfg.Auth.PasswordResetTTL,
+					cfg.Frontend.BaseURL,
+				)
 				return s
 			},
 			func(ur *usersrepo.Repository) *usersvc.Service { return usersvc.New(ur) },
@@ -122,8 +181,10 @@ func servicesModule() fx.Option {
 				s.SetRentalsRepo(rr)
 				return s
 			},
-			func(pool *pgxpool.Pool, rr *rentalsrepo.Repository, sr *scootersrepo.Repository, pmR *pmrepo.Repository, ur *usersrepo.Repository, ps *paymentsvc.Service, pub events.Publisher, log *zap.Logger) *rentalsvc.Service {
-				return rentalsvc.New(pool, rr, sr, pmR, ur, ps, pub, log)
+			func(pool *pgxpool.Pool, rr *rentalsrepo.Repository, sr *scootersrepo.Repository, pmR *pmrepo.Repository, ur *usersrepo.Repository, ps *paymentsvc.Service, zr *zonesrepo.Repository, pub events.Publisher, log *zap.Logger) *rentalsvc.Service {
+				rs := rentalsvc.New(pool, rr, sr, pmR, ur, ps, pub, log)
+				rs.SetZonesRepo(zr)
+				return rs
 			},
 			func(ur *usersrepo.Repository, as *authsvc.Service, gc *googleclient.Client, cfg *config.Config) *oauthsvc.Service {
 				return oauthsvc.New(ur, as, gc, cfg)

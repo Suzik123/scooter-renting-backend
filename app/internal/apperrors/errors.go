@@ -17,6 +17,7 @@ const (
 	KindInsufficient
 	KindScooterUnavailable
 	KindRentalAlreadyEnded
+	KindZoneViolation
 )
 
 type Error struct {
@@ -56,6 +57,8 @@ func Is(err error, kind Kind) bool {
 		return errors.Is(err, ErrScooterUnavailable)
 	case KindRentalAlreadyEnded:
 		return errors.Is(err, ErrRentalAlreadyEnded)
+	case KindZoneViolation:
+		return errors.Is(err, ErrZoneViolation)
 	}
 	return false
 }
@@ -83,6 +86,8 @@ func KindOf(err error) Kind {
 		return KindScooterUnavailable
 	case errors.Is(err, ErrRentalAlreadyEnded):
 		return KindRentalAlreadyEnded
+	case errors.Is(err, ErrZoneViolation):
+		return KindZoneViolation
 	}
 	return KindInternal
 }
@@ -96,6 +101,7 @@ var (
 	ErrInsufficientFunds    = errors.New("insufficient funds")
 	ErrScooterUnavailable   = errors.New("scooter unavailable")
 	ErrRentalAlreadyEnded   = errors.New("rental already ended")
+	ErrZoneViolation        = errors.New("zone violation")
 )
 
 func NotFound(resource string) error {
@@ -137,6 +143,16 @@ func RentalAlreadyEnded(msg string) error {
 		msg = "rental already ended"
 	}
 	return &Error{Kind: KindRentalAlreadyEnded, Msg: msg}
+}
+
+// ZoneViolation flags a geo-fenced policy break. msg is expected to be a
+// machine-readable kind (e.g. "cannot_end_in_no_park_zone") so the HTTP layer
+// can surface it verbatim as the error envelope's `kind` field.
+func ZoneViolation(msg string) error {
+	if msg == "" {
+		msg = "zone violation"
+	}
+	return &Error{Kind: KindZoneViolation, Msg: msg}
 }
 
 func Internal(msg string) error {

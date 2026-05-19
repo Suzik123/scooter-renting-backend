@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
 	"github.com/uniscoot/scooter-renting-backend/app/internal/apperrors"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/config"
+	"github.com/uniscoot/scooter-renting-backend/app/internal/events"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/models"
 	"github.com/uniscoot/scooter-renting-backend/app/pkg/hasher"
 )
@@ -25,6 +27,15 @@ type Service struct {
 	cfg       *config.Config
 	clock     func() time.Time
 	blacklist Blacklist
+
+	// Password-reset deps, wired post-construction via SetPasswordResetDeps
+	// so the existing constructor + tests keep their current arity.
+	prTokens          PasswordResetTokenRepo
+	prUsers           PasswordResetUserRepo
+	prPub             events.Publisher
+	prLog             *zap.Logger
+	prTTL             time.Duration
+	prFrontendBaseURL string
 }
 
 func New(cfg *config.Config, users UserRepo) *Service {

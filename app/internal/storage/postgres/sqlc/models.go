@@ -22,6 +22,15 @@ type Maintenance struct {
 	Status           string           `db:"status"`
 }
 
+type PasswordResetToken struct {
+	TokenID   uuid.UUID  `db:"token_id"`
+	UserID    uuid.UUID  `db:"user_id"`
+	TokenHash []byte     `db:"token_hash"`
+	ExpiresAt time.Time  `db:"expires_at"`
+	UsedAt    *time.Time `db:"used_at"`
+	CreatedAt time.Time  `db:"created_at"`
+}
+
 type Payment struct {
 	PaymentID         uuid.UUID       `db:"payment_id"`
 	UserID            uuid.UUID       `db:"user_id"`

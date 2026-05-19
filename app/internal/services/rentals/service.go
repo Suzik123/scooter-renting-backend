@@ -16,6 +16,7 @@ import (
 	"github.com/uniscoot/scooter-renting-backend/app/internal/apperrors"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/events"
 	"github.com/uniscoot/scooter-renting-backend/app/internal/models"
+	"github.com/uniscoot/scooter-renting-backend/app/pkg/geo"
 )
 
 // PaymentResult is returned by End to surface the post-rental charge outcome.
@@ -55,6 +56,12 @@ type PaymentsService interface {
 	ChargeRental(ctx context.Context, rental *models.Rental, user *models.User) (*PaymentResult, error)
 }
 
+// ZonesRepo provides read-only access to the zones table for geo-fenced
+// enforcement (currently only no_park on End).
+type ZonesRepo interface {
+	List(ctx context.Context, page models.Page) ([]models.Zone, int, error)
+}
+
 type Service struct {
 	pool        *pgxpool.Pool
 	rentals     RentalsRepo
@@ -62,6 +69,7 @@ type Service struct {
 	pricemodels PriceModelRepo
 	users       UsersRepo
 	payments    PaymentsService
+	zones       ZonesRepo
 	pub         events.Publisher
 	log         *zap.Logger
 }
@@ -83,6 +91,12 @@ func New(pool *pgxpool.Pool, rentals RentalsRepo, scooters ScootersRepo, pricemo
 		pub:         pub,
 		log:         log,
 	}
+}
+
+// SetZonesRepo wires the zones reader after construction so tests and the
+// existing fx graph keep their current arities. nil disables geo enforcement.
+func (s *Service) SetZonesRepo(z ZonesRepo) {
+	s.zones = z
 }
 
 // Start opens a rental: enforces payment preconditions, then locks the scooter
@@ -156,6 +170,14 @@ func (s *Service) End(ctx context.Context, rentalID, actorUserID uuid.UUID, endL
 	}
 	pm, err := s.pricemodels.Get(ctx, existing.PriceModelID)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	// Geo enforcement: refuse to end a ride inside a no_park zone. We can
+	// only enforce what we can measure — if the client did not send
+	// coordinates (permission denied / browser without geolocation), we
+	// fall through and let the ride end.
+	if err := s.enforceNoParkZone(ctx, endLat, endLon); err != nil {
 		return nil, nil, err
 	}
 
@@ -278,6 +300,40 @@ func (s *Service) ListByUser(ctx context.Context, userID uuid.UUID, page models.
 
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (*models.Rental, error) {
 	return s.rentals.Get(ctx, id)
+}
+
+// enforceNoParkZone returns a ZoneViolation error when (lat,lon) sits inside
+// any zone with type=no_park. nil coords or an unwired zones repo short-circuit
+// to nil (allow). The list-and-filter approach is cheap at MVP scale
+// (~tens of zones); switch to PostGIS or a sqlc spatial query if the table
+// grows past a few hundred rows.
+func (s *Service) enforceNoParkZone(ctx context.Context, lat, lon *decimal.Decimal) error {
+	if lat == nil || lon == nil {
+		s.log.Warn("rentals.End: ending without coordinates; skipping geo enforcement")
+		return nil
+	}
+	if s.zones == nil {
+		return nil
+	}
+	zones, _, err := s.zones.List(ctx, models.Page{Limit: 1000, Offset: 0})
+	if err != nil {
+		// Don't block ride end on a transient zones-table error: log and let
+		// the rental close. The alternative leaves the scooter rented and
+		// the user stuck.
+		s.log.Error("rentals.End: list zones failed; skipping geo enforcement", zap.Error(err))
+		return nil
+	}
+	latF, _ := lat.Float64()
+	lonF, _ := lon.Float64()
+	for _, z := range zones {
+		if z.ZoneType != models.ZoneTypeNoPark {
+			continue
+		}
+		if geo.IsInsideZone(latF, lonF, z) {
+			return apperrors.ZoneViolation("cannot_end_in_no_park_zone")
+		}
+	}
+	return nil
 }
 
 // emitRentalStarted publishes a RentalStarted event. Errors are logged but

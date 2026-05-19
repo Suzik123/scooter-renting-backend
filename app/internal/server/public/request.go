@@ -131,6 +131,22 @@ func QueryFloat(c fiber.Ctx, key string, def float64) float64 {
 	return f
 }
 
+// QueryBool parses the query-string value for key as a boolean or returns
+// def. Accepts the standard strconv.ParseBool spellings ("1", "true", "TRUE",
+// "T", etc.). An unknown value falls back to def, not an error, so callers
+// can stay panic-free without per-call validation.
+func QueryBool(c fiber.Ctx, key string, def bool) bool {
+	v := c.Query(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
+}
+
 // PageFromCtx reads limit/offset query params and returns a clamped models.Page.
 func PageFromCtx(c fiber.Ctx) models.Page {
 	p := models.Page{

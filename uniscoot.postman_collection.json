@@ -13,7 +13,8 @@
     { "key": "zoneId", "value": "" },
     { "key": "rentalId", "value": "" },
     { "key": "maintenanceId", "value": "" },
-    { "key": "paymentMethodId", "value": "" }
+    { "key": "paymentMethodId", "value": "" },
+    { "key": "idempotencyKey", "value": "" }
   ],
   "item": [
     {
@@ -128,6 +129,19 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "auth", "login"]
             }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "logout"]
+            },
+            "description": "Revokes the current JWT (server-side blacklist). Requires Bearer token."
           }
         }
       ]
@@ -704,6 +718,44 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "admin", "rentals", "{{rentalId}}"]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - Payments",
+      "item": [
+        {
+          "name": "Approve offline payment",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('idempotencyKey')) {",
+                  "  pm.collectionVariables.set('idempotencyKey', 'offline-' + Date.now() + '-' + Math.floor(Math.random()*1e6));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rental_id\": \"{{rentalId}}\",\n  \"amount\": \"12.50\",\n  \"currency\": \"USD\",\n  \"note\": \"Paid in cash at kiosk\",\n  \"idempotency_key\": \"{{idempotencyKey}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/payments/offline",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "payments", "offline"]
+            },
+            "description": "Admin-only. Records a manual offline payment for a completed rental. Idempotent on `idempotency_key` (8-64 chars). Rental must be in status `completed`. Emits `payment.offline_approved` event → triggers email to user."
           }
         }
       ]

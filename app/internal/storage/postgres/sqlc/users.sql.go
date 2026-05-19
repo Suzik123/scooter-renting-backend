@@ -187,6 +187,27 @@ func (q *Queries) LinkUserOAuth(ctx context.Context, arg LinkUserOAuthParams) (U
 	return i, err
 }
 
+const resetUserPassword = `-- name: ResetUserPassword :execrows
+UPDATE users
+SET password_hash   = $1,
+    last_logout_at  = NOW(),
+    updated_at      = NOW()
+WHERE user_id = $2 AND status <> 'deleted'
+`
+
+type ResetUserPasswordParams struct {
+	PasswordHash *string   `db:"password_hash"`
+	UserID       uuid.UUID `db:"user_id"`
+}
+
+func (q *Queries) ResetUserPassword(ctx context.Context, arg ResetUserPasswordParams) (int64, error) {
+	result, err := q.db.Exec(ctx, resetUserPassword, arg.PasswordHash, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setStripeCustomerID = `-- name: SetStripeCustomerID :one
 UPDATE users
 SET stripe_customer_id = $1,

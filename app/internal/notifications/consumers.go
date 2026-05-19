@@ -132,6 +132,12 @@ func recipientFor(env events.Envelope) (string, error) {
 			return "", err
 		}
 		return p.UserEmail, nil
+	case events.TypePasswordResetRequested:
+		var p events.PasswordResetRequested
+		if err := json.Unmarshal(env.Payload, &p); err != nil {
+			return "", err
+		}
+		return p.UserEmail, nil
 	}
 	return "", nil
 }
@@ -153,6 +159,10 @@ func payloadFor(env events.Envelope) any {
 		return p
 	case events.TypeRentalCompleted:
 		var p events.RentalCompleted
+		_ = json.Unmarshal(env.Payload, &p)
+		return p
+	case events.TypePasswordResetRequested:
+		var p events.PasswordResetRequested
 		_ = json.Unmarshal(env.Payload, &p)
 		return p
 	}

@@ -12,15 +12,17 @@ type Config struct {
 	Version     string
 	Environment string `env:"ENVIRONMENT" envDefault:"development"`
 
-	DB     DBConfig
-	Server ServerConfig
-	JWT    JWTConfig
-	Bcrypt BcryptConfig
-	Stripe StripeConfig
-	Google GoogleConfig
-	Redis  RedisConfig
-	Rabbit RabbitConfig
-	SMTP   SMTPConfig
+	DB       DBConfig
+	Server   ServerConfig
+	JWT      JWTConfig
+	Bcrypt   BcryptConfig
+	Stripe   StripeConfig
+	Google   GoogleConfig
+	Redis    RedisConfig
+	Rabbit   RabbitConfig
+	SMTP     SMTPConfig
+	Auth     AuthConfig
+	Frontend FrontendConfig
 }
 
 type DBConfig struct {
@@ -65,6 +67,17 @@ type RedisConfig struct {
 type RabbitConfig struct {
 	URL            string        `env:"RABBIT_URL" envDefault:"amqp://guest:guest@rabbitmq:5672/"`
 	PublishTimeout time.Duration `env:"RABBIT_PUBLISH_TIMEOUT" envDefault:"5s"`
+}
+
+// AuthConfig groups auth-flow knobs that are not strictly JWT-related.
+type AuthConfig struct {
+	PasswordResetTTL time.Duration `env:"PASSWORD_RESET_TTL" envDefault:"30m"`
+}
+
+// FrontendConfig captures the public URL of the SPA, used to build links in
+// transactional emails (currently only the password-reset confirm link).
+type FrontendConfig struct {
+	BaseURL string `env:"FRONTEND_BASE_URL" envDefault:"http://localhost:5173"`
 }
 
 type SMTPConfig struct {

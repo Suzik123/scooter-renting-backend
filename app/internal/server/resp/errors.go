@@ -20,6 +20,8 @@ const (
 	CodeEmailExists        = "EMAIL_ALREADY_EXISTS"
 	CodeInsufficientFunds  = "INSUFFICIENT_FUNDS"
 	CodeRentalAlreadyEnded = "RENTAL_ALREADY_ENDED"
+	CodeTooManyRequests    = "TOO_MANY_REQUESTS"
+	CodeZoneViolation      = "ZONE_VIOLATION"
 )
 
 // Default machine-readable kinds for the standard error codes. Business
@@ -37,6 +39,8 @@ const (
 	KindEmailExists        = "email_already_exists"
 	KindInsufficientFunds  = "insufficient_funds"
 	KindRentalAlreadyEnded = "rental_already_ended"
+	KindTooManyRequests    = "rate_limited"
+	KindZoneViolation      = "zone_violation"
 )
 
 // businessConflictKinds is the closed set of conflict messages whose value
@@ -103,6 +107,15 @@ func ErrInternal() *APIError {
 	return &APIError{HTTPCode: http.StatusInternalServerError, Code: CodeInternal, Kind: KindInternal, Message: "internal server error"}
 }
 
+// ErrTooManyRequests builds a 429 APIError. The optional kind defaults to
+// KindTooManyRequests ("rate_limited") so the frontend can branch on it.
+func ErrTooManyRequests(kind string) *APIError {
+	if kind == "" {
+		kind = KindTooManyRequests
+	}
+	return &APIError{HTTPCode: http.StatusTooManyRequests, Code: CodeTooManyRequests, Kind: kind, Message: "too many requests"}
+}
+
 // FromDomain maps an apperrors.Kind (or sentinel) error onto an *APIError.
 func FromDomain(err error) *APIError {
 	if err == nil {
@@ -142,6 +155,11 @@ func FromDomain(err error) *APIError {
 		return &APIError{HTTPCode: http.StatusConflict, Code: CodeScooterUnavailable, Kind: KindScooterUnavailable, Message: msg}
 	case apperrors.KindRentalAlreadyEnded:
 		return &APIError{HTTPCode: http.StatusConflict, Code: CodeRentalAlreadyEnded, Kind: KindRentalAlreadyEnded, Message: msg}
+	case apperrors.KindZoneViolation:
+		// The service emits a machine-readable kind via the message (e.g.
+		// "cannot_end_in_no_park_zone"); surface it verbatim so the FE can
+		// branch on it without parsing free-form text.
+		return &APIError{HTTPCode: http.StatusConflict, Code: CodeZoneViolation, Kind: msg, Message: msg}
 	}
 	return ErrInternal()
 }

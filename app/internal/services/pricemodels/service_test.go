@@ -79,3 +79,68 @@ func TestUpdate_RejectsBadCurrency(t *testing.T) {
 	_, err := s.Update(context.Background(), uuid.New(), pmsvc.UpdatePatch{Currency: &bad})
 	require.Error(t, err)
 }
+
+func TestCreate_RejectsTooLowPricePerMinute(t *testing.T) {
+	s := pmsvc.New(&fakeRepo{})
+	_, err := s.Create(context.Background(), pmsvc.CreateInput{
+		Name:           "x",
+		PricePerMinute: decimal.NewFromFloat(0.02),
+		UnlockFee:      decimal.NewFromInt(1),
+	})
+	require.Error(t, err)
+	assert.True(t, apperrors.Is(err, apperrors.KindInvalid))
+	assert.Contains(t, err.Error(), "band")
+}
+
+func TestCreate_RejectsTooHighPricePerMinute(t *testing.T) {
+	s := pmsvc.New(&fakeRepo{})
+	_, err := s.Create(context.Background(), pmsvc.CreateInput{
+		Name:           "x",
+		PricePerMinute: decimal.NewFromFloat(3.50),
+		UnlockFee:      decimal.NewFromInt(1),
+	})
+	require.Error(t, err)
+	assert.True(t, apperrors.Is(err, apperrors.KindInvalid))
+}
+
+func TestCreate_RejectsTooHighUnlockFee(t *testing.T) {
+	s := pmsvc.New(&fakeRepo{})
+	_, err := s.Create(context.Background(), pmsvc.CreateInput{
+		Name:           "x",
+		PricePerMinute: decimal.NewFromFloat(0.20),
+		UnlockFee:      decimal.NewFromInt(50),
+	})
+	require.Error(t, err)
+	assert.True(t, apperrors.Is(err, apperrors.KindInvalid))
+}
+
+func TestCreate_AcceptsBandWithForce(t *testing.T) {
+	repo := &fakeRepo{}
+	s := pmsvc.New(repo)
+	pm, err := s.Create(context.Background(), pmsvc.CreateInput{
+		Name:           "promo",
+		PricePerMinute: decimal.NewFromFloat(0.02),
+		UnlockFee:      decimal.NewFromInt(1),
+		Force:          true,
+	})
+	require.NoError(t, err)
+	assert.True(t, pm.PricePerMinute.Equal(decimal.NewFromFloat(0.02)))
+}
+
+func TestUpdate_AppliesBandCheck(t *testing.T) {
+	s := pmsvc.New(&fakeRepo{})
+	bad := decimal.NewFromFloat(5.00)
+	_, err := s.Update(context.Background(), uuid.New(), pmsvc.UpdatePatch{PricePerMinute: &bad})
+	require.Error(t, err)
+	assert.True(t, apperrors.Is(err, apperrors.KindInvalid))
+}
+
+func TestUpdate_BandCheckSkippedWithForce(t *testing.T) {
+	s := pmsvc.New(&fakeRepo{})
+	bad := decimal.NewFromFloat(5.00)
+	_, err := s.Update(context.Background(), uuid.New(), pmsvc.UpdatePatch{
+		PricePerMinute: &bad,
+		Force:          true,
+	})
+	require.NoError(t, err)
+}

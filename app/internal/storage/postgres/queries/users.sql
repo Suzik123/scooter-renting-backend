@@ -53,3 +53,10 @@ SET stripe_customer_id = sqlc.arg('stripe_customer_id'),
     updated_at = NOW()
 WHERE user_id = sqlc.arg('user_id') AND status <> 'deleted'
 RETURNING user_id, first_name, last_name, email, phone_number, registration_date, status, role, password_hash, oauth_provider, oauth_subject, stripe_customer_id, updated_at, last_logout_at;
+
+-- name: ResetUserPassword :execrows
+UPDATE users
+SET password_hash   = sqlc.arg('password_hash'),
+    last_logout_at  = NOW(),
+    updated_at      = NOW()
+WHERE user_id = sqlc.arg('user_id') AND status <> 'deleted';

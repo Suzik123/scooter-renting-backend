@@ -41,6 +41,11 @@ var templatesByEvent = map[string]templateConfig{
 		htmlFile: "templates/rental_completed.html",
 		textFile: "templates/rental_completed.txt",
 	},
+	"password_reset.requested": {
+		subject:  "UniScoot — password reset",
+		htmlFile: "templates/password_reset_requested.html",
+		textFile: "templates/password_reset_requested.txt",
+	},
 }
 
 // Render produces (subject, html, text) for the named template using data.

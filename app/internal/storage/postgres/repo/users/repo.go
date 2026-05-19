@@ -152,6 +152,24 @@ func (r *Repository) LinkOAuth(ctx context.Context, id uuid.UUID, provider, subj
 	return &u, nil
 }
 
+// ResetPassword overwrites the user's password hash and bumps last_logout_at
+// to NOW(). The JWT middleware compares each token's iat against
+// last_logout_at on every request, so this kills every existing session for
+// the user in addition to setting the new credential.
+func (r *Repository) ResetPassword(ctx context.Context, id uuid.UUID, passwordHash string) error {
+	n, err := r.q.ResetUserPassword(ctx, sqlc.ResetUserPasswordParams{
+		PasswordHash: &passwordHash,
+		UserID:       id,
+	})
+	if err != nil {
+		return fmt.Errorf("users.ResetPassword: %w", err)
+	}
+	if n == 0 {
+		return apperrors.NotFound("user")
+	}
+	return nil
+}
+
 func (r *Repository) SetStripeCustomerID(ctx context.Context, id uuid.UUID, customerID string) (*models.User, error) {
 	row, err := r.q.SetStripeCustomerID(ctx, sqlc.SetStripeCustomerIDParams{
 		StripeCustomerID: &customerID,

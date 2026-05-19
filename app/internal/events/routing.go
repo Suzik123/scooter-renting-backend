@@ -14,6 +14,11 @@ func RouteFor(typ string) (exchange, routingKey string) {
 		return "payments.events", "rental.started"
 	case TypeRentalCompleted:
 		return "payments.events", "rental.completed"
+	case TypePasswordResetRequested:
+		// The notifications.events exchange is bound by the email-send queue
+		// with the `notification.email.#` pattern (see notifications/
+		// consumers.go), so this routing key falls under that wildcard.
+		return "notifications.events", "notification.email.password_reset_requested"
 	}
 	return "", ""
 }

@@ -29,6 +29,8 @@ type AuthService interface {
 	Register(ctx context.Context, email, firstName, lastName, password, phoneNumber string) (*models.User, string, error)
 	Login(ctx context.Context, email, password string) (*models.User, string, error)
 	Logout(ctx context.Context, token string) error
+	RequestPasswordReset(ctx context.Context, email string) error
+	ConfirmPasswordReset(ctx context.Context, token, newPassword string) error
 }
 
 // OAuthService is the subset of the oauth service used by HTTP handlers.
@@ -247,6 +249,43 @@ func (h *Handler) Logout(c fiber.Ctx) error {
 		return WriteError(c, resp.ErrUnauthorized(""))
 	}
 	if err := h.auth.Logout(c.Context(), ident.Token); err != nil {
+		return WriteDomain(c, err)
+	}
+	return WriteNoContent(c)
+}
+
+type passwordResetRequestReq struct {
+	Email string `json:"email" validate:"required,email,max=255"`
+}
+
+type passwordResetConfirmReq struct {
+	Token       string `json:"token" validate:"required,min=8,max=256"`
+	NewPassword string `json:"new_password" validate:"required,min=8,max=128"`
+}
+
+// RequestPasswordReset issues a reset link for the given email. Always
+// responds 204 — even when the email does not exist — so callers cannot
+// enumerate accounts via this endpoint.
+func (h *Handler) RequestPasswordReset(c fiber.Ctx) error {
+	var body passwordResetRequestReq
+	if err := DecodeBody(c, &body); err != nil {
+		return WriteDomain(c, err)
+	}
+	if err := h.auth.RequestPasswordReset(c.Context(), body.Email); err != nil {
+		return WriteDomain(c, err)
+	}
+	return WriteNoContent(c)
+}
+
+// ConfirmPasswordReset accepts a (token, new_password) pair and rotates the
+// user's credentials. 401 invalid_token for expired/used/unknown tokens,
+// 400 invalid for bad payloads.
+func (h *Handler) ConfirmPasswordReset(c fiber.Ctx) error {
+	var body passwordResetConfirmReq
+	if err := DecodeBody(c, &body); err != nil {
+		return WriteDomain(c, err)
+	}
+	if err := h.auth.ConfirmPasswordReset(c.Context(), body.Token, body.NewPassword); err != nil {
 		return WriteDomain(c, err)
 	}
 	return WriteNoContent(c)
@@ -863,6 +902,7 @@ func (h *Handler) CreatePriceModel(c fiber.Ctx) error {
 		UnlockFee:      body.UnlockFee,
 		DailyCap:       body.DailyCap,
 		Currency:       body.Currency,
+		Force:          QueryBool(c, "force", false),
 	})
 	if err != nil {
 		return WriteDomain(c, err)
@@ -909,6 +949,7 @@ func (h *Handler) UpdatePriceModel(c fiber.Ctx) error {
 			patch.Currency = &s
 		}
 	}
+	patch.Force = QueryBool(c, "force", false)
 	pm, err := h.priceModels.Update(c.Context(), id, patch)
 	if err != nil {
 		return WriteDomain(c, err)
